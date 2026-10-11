@@ -236,22 +236,15 @@ customElements.define('gw-workspace', class extends LitElement {
         }
 
         return html`
-            <h2>${this.workspace.name} <gw-action @click=${async e => {
-                e.preventDefault();
-                await fetch("/.git-works/session-mode", {method: 'PATCH'})
-                location.reload()
-            }}>Opencode</gw-action></h2>
-
+            <h2>${this.workspace.name}</h2>
             <div>
                 <gw-workspace-status .wsid=${this.workspace.id}></gw-workspace-status>
             </div>
-                        
-            <div>Owner ${this.workspace.owner}, am: ${this.workspace.created}</div>
-
+            <div>
+                Owner ${this.workspace.owner}, am: ${this.workspace.created}
+            </div>
             <gw-workspace-oc-control .wsid=${this.workspace.id}></gw-workspace-oc-control>
-            
             <gw-workspace-init .wsid=${this.workspace.id}></gw-workspace-init>
-            
             <div>
                 <h3>Projekte</h3>
                 <gw-add-project .wsid=${this.workspace.id}></gw-add-project>
@@ -261,7 +254,6 @@ customElements.define('gw-workspace', class extends LitElement {
                         </gw-row>`)
                     : html`<a>Bisher sind keine Projekte vorhanden</a>`}
             </div>
-            
         `;
     }
 
