@@ -34,7 +34,7 @@ func main() {
 	pipelineID := 0
 
 	handler.HandleFunc("POST /api/v4/pipelines", func(writer http.ResponseWriter, request *http.Request) {
-		slog.Default().Info("Received pipeline", request.RequestURI)
+		slog.Default().Info("Received pipeline", "uri", request.RequestURI)
 		var body PipelineRequest
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil || body.Ref == "" {
 			slog.Default().Error("fehler beim parsen", "error", err.Error())
