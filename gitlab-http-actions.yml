@@ -1,0 +1,23 @@
+requests:
+  OPENCODE_WORKSPACE_HEALTH:
+    method: POST
+    url: "http://127.0.0.1:{{.port}}/"
+    headers:
+      Authorization: "{{.oc_authorization}}"
+  OPENCODE_START:
+    method: POST
+    url: "http://127.0.0.1:8999/api/v4/pipelines"
+    headers:
+      Content-Type: application/json
+    body: |
+      {
+        "ref": "main",
+        "variables": {
+          "JOB": "OC_UP",
+          "WSID": "{{.wsid}}",
+          "NAME": "{{.name}}",
+          "PORT": "{{.port}}",
+          "OPENCODE_SERVER_USERNAME": "{{.oc_username}}",
+          "OPENCODE_SERVER_PASSWORD": "{{.oc_password}}"
+        }
+      }
