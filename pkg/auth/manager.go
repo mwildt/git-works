@@ -37,7 +37,7 @@ type Manager struct {
 	client   *gitlab.Client
 }
 
-func (m Manager) CreateSession(token gitlab.Token) (Session, error) {
+func (m *Manager) CreateSession(token gitlab.Token) (Session, error) {
 	user, err := m.client.GetUser(token)
 	if err != nil {
 		return Session{}, err
@@ -56,7 +56,7 @@ func (m Manager) CreateSession(token gitlab.Token) (Session, error) {
 	return session, nil
 }
 
-func (m Manager) Validate(value string) (Session, error) {
+func (m *Manager) Validate(value string) (Session, error) {
 	sess, ok := m.sessions[value]
 	if !ok {
 		return Session{}, fmt.Errorf("session not found")
@@ -64,7 +64,9 @@ func (m Manager) Validate(value string) (Session, error) {
 	return *sess, nil
 }
 
-func (m Manager) ActivateWorkspace(sessionId string, wsid uuid.UUID) error {
+func (m *Manager) ActivateWorkspace(sessionId string, wsid uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	sess, ok := m.sessions[sessionId]
 	if !ok {
 		return fmt.Errorf("session not found")
