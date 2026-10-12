@@ -44,11 +44,12 @@ func (m *Manager) Create(owner string) *Workspace {
 	}
 	m.items = append(m.items, ws)
 	go func() {
-		if err := os.MkdirAll(path.Join("./data", ws.Id.String(), "workspace"), os.ModePerm); err != nil {
+		if err := os.MkdirAll(ws.workspaceDir(), os.ModePerm); err != nil {
 			slog.Default().Error("failed to create workspace directory", "error", err)
 		}
-		opencodeConfig := []byte("DAS ist ein Text")
-		opencodeFile := path.Join("./data", ws.Id.String(), "opencode.yml")
+		opencodeConfig := []byte("{}")
+
+		opencodeFile := path.Join(ws.baseDir(), "opencode.json")
 		if err := os.WriteFile(opencodeFile, opencodeConfig, 0644); err != nil {
 			slog.Default().Error("Error creating opencode file", "error", err)
 		}
@@ -96,8 +97,8 @@ func (m *Manager) GetProjectStatus(username string, workspaceId uuid.UUID, proje
 
 	return ProjectStatus{
 		ProjectId:   project.Id,
-		Initialized: isGitRepo(path.Join("data", w.Id.String(), "workspace", project.Path)),
-		HasChanges:  hasGitChanges(path.Join("data", w.Id.String(), "workspace", project.Path)),
+		Initialized: isGitRepo(path.Join(w.workspaceDir(), project.Path)),
+		HasChanges:  hasGitChanges(path.Join(w.workspaceDir(), project.Path)),
 	}, nil
 
 }

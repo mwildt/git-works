@@ -31,7 +31,7 @@ type configuration struct {
 func main() {
 
 	appConfig := &configuration{
-		Host: config.GetEnv("SERVER_ADDRESS", "0.0.0.0:8010"),
+		Host: config.GetEnv("SERVER_ADDRESS", "0.0.0.0:8080"),
 	}
 
 	opencodeActions, err := actions.NewHttpActions(config.GetEnv("GITHUB_ACTIONS_FILE", "gitlab-http-actions.yml"))

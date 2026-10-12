@@ -12,6 +12,7 @@ import (
 	"uuid"
 
 	"gtihub.com/mwildt/git-works/pkg/actions"
+	"gtihub.com/mwildt/git-works/pkg/config"
 	"gtihub.com/mwildt/git-works/pkg/git"
 	"gtihub.com/mwildt/git-works/pkg/gitlab"
 )
@@ -74,8 +75,22 @@ func (w *Workspace) DeleteProjectById(value uuid.UUID) bool {
 	return false
 }
 
+func (w *Workspace) baseDir() string {
+	return path.Join(
+		config.GetEnv("DATA_DIR", "./data"),
+		w.Id.String(),
+	)
+}
+
+func (w *Workspace) workspaceDir() string {
+	return path.Join(
+		w.baseDir(),
+		"workspace",
+	)
+}
+
 func (w *Workspace) Init(token gitlab.Token, client *git.Git) error {
-	workspacePath := path.Join("data", w.Id.String(), "workspace")
+	workspacePath := w.workspaceDir()
 	for _, project := range w.Projects {
 		if err := project.Init(token, client, workspacePath); err != nil {
 			return err
