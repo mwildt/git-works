@@ -10,6 +10,7 @@ import (
 	"time"
 	"uuid"
 
+	"gtihub.com/mwildt/git-works/pkg/config"
 	"gtihub.com/mwildt/git-works/pkg/misc"
 )
 
@@ -37,7 +38,7 @@ func (m *Manager) Create(owner string) *Workspace {
 			Key:          "opencode_container_" + id.String()[0:10],
 			AuthUsername: "git-works",
 			AuthPassword: "password",
-			Host:         "127.0.0.1",
+			Host:         config.GetEnv("OPENCODE_REMOTE_HOST", "127.0.0.1"),
 			Port:         m.nextPort(),
 		},
 	}

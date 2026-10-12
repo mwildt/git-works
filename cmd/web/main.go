@@ -28,8 +28,6 @@ type configuration struct {
 	Host string
 }
 
-const TOKEN = "glpat-iFJVtDMtH4T1mGSp93YyP2M6MQpvOjEKdTpwcGVrZA8.01.17064qicx"
-
 func main() {
 
 	appConfig := &configuration{
@@ -41,7 +39,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	gitlabClient := gitlab.NewClient("https://gitlab.com")
+	gitlabClient := gitlab.NewClient(config.GetEnv("GITLAB_BASE_URL", "https://gitlab.com"))
 	sessionManager := auth.NewSessionManager(gitlabClient)
 	workspaceManager := workspaces.NewManager()
 

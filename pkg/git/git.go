@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"gtihub.com/mwildt/git-works/pkg/config"
 	"gtihub.com/mwildt/git-works/pkg/gitlab"
 )
 
@@ -41,8 +42,8 @@ func (g *Git) Clone(token gitlab.Token, url string, path string, branch string) 
 
 		cmd := exec.CommandContext(ctx, "git", "clone", "--branch", branch, "--depth", "1", url, path)
 		cmd.Env = append(os.Environ(),
-			"SSH_ASKPASS=/home/malte/projects/git-works/git-askpass",
 			"SSH_ASKPASS_REQUIRE=force",
+			fmt.Sprintf("SSH_ASKPASS=%s", config.GetEnv("SSH_ASKPASS", "/usr/local/bin/git-askpass")),
 			fmt.Sprintf("GIT_TOKEN=%s", token.Value),
 		)
 		output, err := cmd.CombinedOutput()
