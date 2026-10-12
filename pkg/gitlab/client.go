@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 )
 
@@ -56,7 +57,9 @@ func NewClient(baseUrl string) *Client {
 }
 
 func (c *Client) GetUser(token Token) (user *UserResponse, err error) {
-	req, err := http.NewRequest("GET", c.baseUrl+"/api/v4/user", nil)
+	url := c.baseUrl + "/api/v4/user"
+	slog.Default().Info("Getting user", "url", url, "token-type", token.TokenType)
+	req, err := http.NewRequest("GET", url, nil)
 	req.Header.Set(token.TokenType, token.Value)
 	if err != nil {
 		return

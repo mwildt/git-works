@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 	"uuid"
@@ -40,6 +41,7 @@ type Manager struct {
 func (m *Manager) CreateSession(token gitlab.Token) (Session, error) {
 	user, err := m.client.GetUser(token)
 	if err != nil {
+		slog.Default().Error("unable to get user", "error", err)
 		return Session{}, err
 	}
 	id, err := RandomString(32)

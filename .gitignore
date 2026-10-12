@@ -2,3 +2,4 @@ data/
 .idea/
 *.http
 pgw-data/
+gw-data/
