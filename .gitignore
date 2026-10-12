@@ -1,3 +1,4 @@
 data/
 .idea/
-*.http
+*.htt
+pgw-data/

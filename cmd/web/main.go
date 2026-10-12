@@ -34,7 +34,17 @@ func main() {
 		Host: config.GetEnv("SERVER_ADDRESS", "0.0.0.0:8080"),
 	}
 
-	opencodeActions, err := actions.NewHttpActions(config.GetEnv("GITHUB_ACTIONS_FILE", "gitlab-http-actions.yml"))
+	opencodeActions, err := actions.NewHttpActions(config.GetEnv("GITLAB_ACTIONS_FILE", "gitlab-http-actions.yml"))
+
+	slog.Info("startup-info",
+		"SERVER_ADDRESS", os.Getenv("SERVER_ADDRESS"),
+		"DATA_DIR", os.Getenv("DATA_DIR"),
+		"GITLAB_ACTIONS_FILE", os.Getenv("GITLAB_ACTIONS_FILE"),
+		"GITLAB_BASE_URL", os.Getenv("GITLAB_BASE_URL"),
+		"SSH_ASKPASS", os.Getenv("SSH_ASKPASS"),
+		"OPENCODE_REMOTE_HOST", os.Getenv("OPENCODE_REMOTE_HOST"),
+	)
+
 	if err != nil {
 		log.Fatal(err)
 	}
