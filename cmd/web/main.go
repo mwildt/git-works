@@ -92,7 +92,7 @@ func main() {
 			return
 		}
 		request.Header.Set("Authorization", fmt.Sprintf("Basic %s", workspace.Opencode.BasicAuth()))
-		target, _ := url.Parse(workspace.Opencode.TargetUrl())
+		target, _ := url.Parse(workspace.TargetUrl())
 		proxy := httputil.NewSingleHostReverseProxy(target)
 
 		proxy.ModifyResponse = func(resp *http.Response) error {

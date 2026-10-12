@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"path"
 	"strconv"
+	"text/template"
 	"time"
 	"uuid"
 
@@ -155,7 +157,11 @@ func (w *Workspace) Stop(token gitlab.Token, client *actions.Client) error {
 
 func (w *Workspace) Status(opencodeActions *actions.Client) string {
 	res, err := opencodeActions.Send(context.Background(), "OPENCODE_WORKSPACE_HEALTH", map[string]string{
+		"wsid":             w.Id.String(),
+		"name":             w.Opencode.Key,
 		"port":             strconv.Itoa(w.Opencode.Port),
+		"oc_password":      w.Opencode.AuthPassword,
+		"oc_username":      w.Opencode.AuthUsername,
 		"oc_authorization": fmt.Sprintf("Basic %s", w.Opencode.BasicAuth()),
 	})
 	if err != nil {
@@ -167,4 +173,16 @@ func (w *Workspace) Status(opencodeActions *actions.Client) string {
 		return "down"
 	}
 	return "up"
+}
+
+func (w *Workspace) TargetUrl() string {
+	urlTemplate := config.GetEnv("OPENCODE_TARGET_URL", "http://{{.host}}:{{.port}}")
+	t := template.Must(template.New("tpl").Parse(urlTemplate))
+	var buf bytes.Buffer
+	t.Execute(&buf, map[string]any{
+		"host": w.Opencode.Host,
+		"port": strconv.Itoa(w.Opencode.Port),
+		"wsid": w.Id.String(),
+	})
+	return buf.String()
 }
