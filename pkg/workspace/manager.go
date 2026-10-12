@@ -104,7 +104,7 @@ func (m *Manager) GetProjectStatus(username string, workspaceId uuid.UUID, proje
 }
 
 func (m *Manager) nextPort() int {
-	port := 9000
+	port := config.GetEnvInt("WORKSPACE_START_PORT", 9000)
 	for _, ws := range m.items {
 		if ws.Opencode.Port >= port {
 			port = ws.Opencode.Port + 1
