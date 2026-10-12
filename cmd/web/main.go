@@ -282,10 +282,39 @@ func main() {
 			return
 		}
 
-		err = workspace.Start(opencodeActions)
+		err = workspace.Start(session.Token, opencodeActions)
 		if err != nil {
+			slog.Default().Error("unable to stop", "error", err)
+			http.Error(w, "unable to start", http.StatusBadGateway)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+
+	})
+
+	api.HandleFunc("POST /api/workspace/{wsId}/oc-down", func(w http.ResponseWriter, r *http.Request) {
+		wsId, err := uuid.Parse(r.PathValue("wsId"))
+		if err != nil {
+			slog.Default().Warn("invalid ws id")
+			http.Error(w, "invalid ws id", http.StatusBadRequest)
+			return
+		}
+		cookie, _ := r.Cookie("gw_session")
+		session, _ := sessionManager.Validate(cookie.Value)
+
+		workspace, ok := workspaceManager.ByIdAndOwner(wsId, session.Username)
+		if !ok {
 			slog.Default().Warn("workspace not found")
-			http.Error(w, "workspace not found", http.StatusBadGateway)
+			http.Error(w, "workspace not found", http.StatusNotFound)
+			return
+		}
+
+		err = workspace.Stop(session.Token, opencodeActions)
+		if err != nil {
+			slog.Default().Error("unable to stop", "error", err)
+			http.Error(w, "unable to start", http.StatusBadGateway)
 			return
 		}
 

@@ -108,7 +108,7 @@ func (w *Workspace) ProjectById(id uuid.UUID) (Project, bool) {
 	return Project{}, false
 }
 
-func (w *Workspace) Start(client *actions.Client) error {
+func (w *Workspace) Start(token gitlab.Token, client *actions.Client) error {
 	slog.Default().Info("Starting workspace", "name", w.Name, "id", w.Id.String(), "port", w.Opencode.Port)
 	res, err := client.Send(context.Background(), "OPENCODE_START", map[string]string{
 		"wsid":        w.Id.String(),
@@ -116,6 +116,30 @@ func (w *Workspace) Start(client *actions.Client) error {
 		"port":        strconv.Itoa(w.Opencode.Port),
 		"oc_password": w.Opencode.AuthPassword,
 		"oc_username": w.Opencode.AuthUsername,
+		"token_type":  token.TokenType,
+		"token_value": token.Value,
+	})
+	if err != nil {
+		slog.Default().Error("Failed to start workspace", "name", w.Name, "id", w.Id.String(), "err", err)
+		return err
+	}
+	if res.StatusCode >= 300 {
+		slog.Default().Error("Failed to start workspace", "name", w.Name, "id", w.Id.String(), "status_code", res.StatusCode)
+		return errors.New(res.Status)
+	}
+	return nil
+}
+
+func (w *Workspace) Stop(token gitlab.Token, client *actions.Client) error {
+	slog.Default().Info("Starting workspace", "name", w.Name, "id", w.Id.String(), "port", w.Opencode.Port)
+	res, err := client.Send(context.Background(), "OPENCODE_STOP", map[string]string{
+		"wsid":        w.Id.String(),
+		"name":        w.Opencode.Key,
+		"port":        strconv.Itoa(w.Opencode.Port),
+		"oc_password": w.Opencode.AuthPassword,
+		"oc_username": w.Opencode.AuthUsername,
+		"token_type":  token.TokenType,
+		"token_value": token.Value,
 	})
 	if err != nil {
 		slog.Default().Error("Failed to start workspace", "name", w.Name, "id", w.Id.String(), "err", err)
