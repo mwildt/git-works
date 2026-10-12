@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"path"
 	"strconv"
@@ -150,4 +151,20 @@ func (w *Workspace) Stop(token gitlab.Token, client *actions.Client) error {
 		return errors.New(res.Status)
 	}
 	return nil
+}
+
+func (w *Workspace) Status(opencodeActions *actions.Client) string {
+	res, err := opencodeActions.Send(context.Background(), "OPENCODE_WORKSPACE_HEALTH", map[string]string{
+		"port":             strconv.Itoa(w.Opencode.Port),
+		"oc_authorization": fmt.Sprintf("Basic %s", w.Opencode.BasicAuth()),
+	})
+	if err != nil {
+		slog.Default().Warn("unable to run OPENCODE_WORKSPACE_HEALTH", "error", err.Error())
+		return "down"
+	} else if res.StatusCode != 200 {
+		body, _ := io.ReadAll(res.Body)
+		slog.Default().Warn("status != 200 when running OPENCODE_WORKSPACE_HEALTH", "status", res.StatusCode, "code", res.StatusCode, "body", string(body))
+		return "down"
+	}
+	return "up"
 }

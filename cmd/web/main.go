@@ -1,10 +1,8 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"log/slog"
 	"net/http"
@@ -12,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"strconv"
 	"time"
 	"uuid"
 
@@ -257,6 +254,19 @@ func main() {
 			http.Error(writer, "invalid cookie", http.StatusUnauthorized)
 			return
 		}
+
+		session, _ := sessionManager.Validate(cookie.Value)
+		workspace, ok := workspaceManager.ByIdAndOwner(wsid, session.Username)
+		if !ok {
+			slog.Default().Warn("workspace not found")
+			http.Error(writer, "workspace not found", http.StatusNotFound)
+			return
+		}
+		status := workspace.Status(opencodeActions)
+		if status != "up" {
+			http.Error(writer, "workspace is down", http.StatusBadGateway)
+			return
+		}
 		if err := sessionManager.ActivateWorkspace(cookie.Value, wsid); err != nil {
 			slog.Default().Warn("unable to activate workspace", "wsid", wsid.String(), "err", err)
 			http.Error(writer, "invalid cookie", http.StatusInternalServerError)
@@ -348,21 +358,7 @@ func main() {
 			Status      string    `json:"status"`
 		}{
 			WorkspaceId: workspace.Id,
-			Status: func() string {
-				res, err := opencodeActions.Send(context.Background(), "OPENCODE_WORKSPACE_HEALTH", map[string]string{
-					"port":             strconv.Itoa(workspace.Opencode.Port),
-					"oc_authorization": fmt.Sprintf("Basic %s", workspace.Opencode.BasicAuth()),
-				})
-				if err != nil {
-					slog.Default().Warn("unable to run OPENCODE_WORKSPACE_HEALTH", "error", err.Error())
-					return "down"
-				} else if res.StatusCode != 200 {
-					body, _ := io.ReadAll(res.Body)
-					slog.Default().Warn("status != 200 when running OPENCODE_WORKSPACE_HEALTH", "status", res.StatusCode, "code", res.StatusCode, "body", string(body))
-					return "down"
-				}
-				return "up"
-			}(),
+			Status:      workspace.Status(opencodeActions),
 		}
 
 		if err := json.NewEncoder(w).Encode(response); err != nil {
