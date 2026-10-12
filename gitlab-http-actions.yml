@@ -21,3 +21,20 @@ requests:
           "OPENCODE_SERVER_PASSWORD": "{{.oc_password}}"
         }
       }
+  OPENCODE_STOP:
+    method: POST
+    url: "http://127.0.0.1:8999/api/v4/pipelines"
+    headers:
+      Content-Type: application/json
+    body: |
+      {
+        "ref": "main",
+        "variables": {
+          "JOB": "OC_STOP",
+          "WSID": "{{.wsid}}",
+          "NAME": "{{.name}}",
+          "PORT": "{{.port}}",
+          "OPENCODE_SERVER_USERNAME": "{{.oc_username}}",
+          "OPENCODE_SERVER_PASSWORD": "{{.oc_password}}"
+        }
+      }

@@ -22,7 +22,11 @@ customElements.define('gw-workspace-status', class extends LitElement {
 
 
     render() {
-        return html`Status: ${this.status.status}`
+        return html`Opencode-Container-Status: ${this.status.status == "up"
+                ? html`<gw-badge ok>UP</gw-badge>` 
+                :  this.status.status == "down" 
+                        ? html`<gw-badge warn>Down</gw-badge>` 
+                        : html`<gw-badge error>Unknown</gw-badge>` }`
     }
 
     async reload() {
@@ -47,7 +51,6 @@ customElements.define('gw-workspace-oc-control', class extends LitElement {
 
     async connectedCallback() {
         super.connectedCallback()
-        this.reload()
     }
 
 
@@ -90,7 +93,6 @@ customElements.define('gw-workspace-oc-control', class extends LitElement {
         }
     }
 
-
 })
 
 customElements.define('gw-workspace-project-status', class extends LitElement {
@@ -111,9 +113,17 @@ customElements.define('gw-workspace-project-status', class extends LitElement {
         this.reload()
     }
 
-
     render() {
-        return html`Status: ${JSON.stringify(this.status)}`
+        return html`
+            ${this.status.initialized
+                    ? html`<gw-badge ok>Initialisiert</gw-badge>`
+                    : html`<gw-badge warn>Nicht initialisiert</span>`}
+            ${this.status.initialized
+                    ? (this.status.has_changes
+                            ? html`<gw-badge warn>Änderungen vorhanden</span>`
+                            : html`<gw-badge ok>Keine Änderungen</gw-badge >`)
+                    : undefined}
+        `
     }
 
     async reload() {
@@ -134,6 +144,7 @@ customElements.define('gw-workspace-project', class extends LitElement {
     };
 
     render() {
+
         return html`
             <h4>${this.project.git_url} &#8594 ${this.project.path} </h4>
             
@@ -178,7 +189,7 @@ customElements.define('gw-workspace-init', class extends LitElement {
 
     render() {
         if (!this.running) {
-            return html`<gw-button @click=${() => this.start()}>Workspace initialisiern</gw-button>`
+            return html`<gw-button @click=${() => this.start()}>Workspace initialisieren</gw-button>`
         }
         return html`
             <gw-dialog>
@@ -211,11 +222,12 @@ customElements.define('gw-workspace', class extends LitElement {
     static properties = {
         wsid: {},
         workspace: {},
+        state: {}
     };
 
     constructor() {
         super();
-
+        this.state = "loading"
         this.addEventListener('gw-add-project::success', async () => {
             await this.reload();
         });
@@ -231,8 +243,16 @@ customElements.define('gw-workspace', class extends LitElement {
     }
 
     render() {
-        if (!this.workspace) {
+        if (this.state === "loading") {
             return html`<h1>...loading</h1>`
+        }
+
+        if (this.state === "notFound") {
+            return html`<h1>Der gesuchte workspace scheint leider nicht zu existieren</h1>`
+        }
+
+        if (this.state === "error") {
+            return html`<h1>Beim Laden ist leider in Fehler aufgetreten.</h1>`
         }
 
         return html`
@@ -264,7 +284,17 @@ customElements.define('gw-workspace', class extends LitElement {
     async reload() {
         if (this.wsid) {
             const response = await fetch(`/api/workspace/${this.wsid}`);
+            if (response.status === 404) {
+                this.state = 'notFound';
+                return;
+            }
+            if (!response.ok) {
+                this.state = 'error';
+                return;
+            }
             this.workspace = await response.json();
+            this.state = 'loaded';
+
         }
     }
 

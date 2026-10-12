@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
@@ -10,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strings"
 	"time"
 	"uuid"
 
@@ -90,13 +94,39 @@ func main() {
 		request.Header.Set("Authorization", fmt.Sprintf("Basic %s", workspace.Opencode.BasicAuth()))
 		target, _ := url.Parse(workspace.Opencode.TargetUrl())
 		proxy := httputil.NewSingleHostReverseProxy(target)
+
+		proxy.ModifyResponse = func(resp *http.Response) error {
+			ct := resp.Header.Get("Content-Type")
+			if !strings.Contains(ct, "text/html") {
+				return nil
+			}
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+
+			const injectTag = "<script type=\"module\" crossorigin src=\"./.gw-mixin/index.js\" defer></script>"
+			lower := bytes.ToLower(body)
+			idx := bytes.LastIndex(lower, []byte("</body>"))
+			if idx == -1 {
+				return nil // kein </body>, nichts injizieren
+			}
+			var out bytes.Buffer
+			out.Write(body[:idx])
+			out.WriteString(injectTag)
+			out.Write(body[idx:])
+
+			resp.Body = io.NopCloser(&out)
+			resp.ContentLength = int64(out.Len())
+			resp.Header.Set("Content-Length", fmt.Sprint(out.Len()))
+			return nil
+		}
+
 		proxy.ServeHTTP(writer, request)
 		return
 	})
 
-	opencode.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, path.Join("./static/opencode", "index.html"))
-	})
+	//opencode.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+	//	http.ServeFile(w, r, path.Join("./static/opencode", "index.html"))
+	//})
 
 	opencode.Handle("GET /.gw-mixin/", http.FileServer(http.Dir("./static/opencode/")))
 
@@ -151,12 +181,13 @@ func main() {
 				http.Error(w, "invalid cookie", http.StatusUnauthorized)
 				return
 			}
-			_, err = sessionManager.Validate(cookie.Value)
+			session, err := sessionManager.Validate(cookie.Value)
 			if err != nil {
 				slog.Default().Warn("session is invalid")
 				http.Error(w, "invalid cookie", http.StatusUnauthorized)
 				return
 			}
+			r.WithContext(context.WithValue(r.Context(), "SESSION", session))
 			handler.ServeHTTP(w, r)
 		}
 	}
