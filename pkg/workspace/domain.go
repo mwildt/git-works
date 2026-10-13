@@ -64,11 +64,11 @@ func (p Project) Init(token gitlab.Token, client *git.Git, workspace string) err
 	return client.Clone(token, p.GitUrl, path.Join(workspace, p.Path), p.Branch)
 }
 
-func (w *Workspace) AddProject(path string, gitUrl string, branch string) {
+func (w *Workspace) addProject(path string, gitUrl string, branch string) {
 	w.Projects = append(w.Projects, Project{Path: path, GitUrl: gitUrl, Branch: branch, Id: uuid.New()})
 }
 
-func (w *Workspace) DeleteProjectById(value uuid.UUID) bool {
+func (w *Workspace) deleteProjectById(value uuid.UUID) bool {
 	for i, project := range w.Projects {
 		if project.Id == value {
 			w.Projects = append(w.Projects[:i], w.Projects[i+1:]...)
@@ -176,7 +176,7 @@ func (w *Workspace) Status(opencodeActions *actions.Client) string {
 }
 
 func (w *Workspace) TargetUrl() string {
-	urlTemplate := config.GetEnv("OPENCODE_TARGET_URL", "http://{{.host}}:{{.port}}")
+	urlTemplate := config.GetEnv("OPENCODE_TARGET_URL", "http://{{.host}}:{{.port}}/")
 	t := template.Must(template.New("tpl").Parse(urlTemplate))
 	var buf bytes.Buffer
 	t.Execute(&buf, map[string]any{

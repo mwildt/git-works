@@ -52,7 +52,10 @@ func main() {
 
 	gitlabClient := gitlab.NewClient(config.GetEnv("GITLAB_BASE_URL", "https://gitlab.com"))
 	sessionManager := auth.NewSessionManager(gitlabClient)
-	workspaceManager := workspaces.NewManager()
+	workspaceManager, err := workspaces.NewManager()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	gitClient := git.NewGit()
 
@@ -478,7 +481,7 @@ func main() {
 			return
 		}
 
-		workspace.AddProject(project.Path, project.Project.GitUrl, project.Branch.Name)
+		workspaceManager.AddProject(workspace, project.Path, project.Project.GitUrl, project.Branch.Name)
 		writer.WriteHeader(http.StatusCreated)
 	})
 
@@ -505,7 +508,7 @@ func main() {
 			http.Error(writer, "workspace not found", http.StatusNotFound)
 			return
 		}
-		workspace.DeleteProjectById(projectId)
+		workspaceManager.DeleteProjectById(workspace, projectId)
 	})
 
 	api.HandleFunc("GET /api/workspace/{wsId}/project/{projectId}/status", func(writer http.ResponseWriter, request *http.Request) {

@@ -1,7 +1,9 @@
 package workspace
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -12,18 +14,84 @@ import (
 
 	"gtihub.com/mwildt/git-works/pkg/config"
 	"gtihub.com/mwildt/git-works/pkg/misc"
+	"gtihub.com/mwildt/git-works/pkg/storage"
 )
 
 type (
+	eventlog struct {
+		file     string
+		appender storage.Appender
+	}
+
 	Manager struct {
-		items []*Workspace
+		items map[string]*Workspace
+		log   *eventlog
+	}
+
+	Event struct {
+		Eventtype string
+		Event     json.RawMessage
 	}
 )
 
-func NewManager() Manager {
-	return Manager{
-		items: []*Workspace{},
+func NewManager() (*Manager, error) {
+	manager := Manager{
+		items: make(map[string]*Workspace),
 	}
+
+	if os.Getenv("WORSPACE_LOG") != "" {
+		file := path.Join(os.Getenv("WORSPACE_LOG"))
+		slog.Default().Info("create workspace log", "file", file)
+
+		appender, err := storage.NewFileAppender(file)
+		if err != nil {
+			return nil, err
+		}
+		manager.log = &eventlog{
+			file:     path.Join(os.Getenv("WORSPACE_LOG")),
+			appender: appender,
+		}
+
+		if scan, err := storage.NewFileScanner(file); err != nil {
+			return nil, err
+		} else if err = scan.Replay(storage.Consuming(manager.handleLog)); err != nil && err != io.EOF {
+			return nil, err
+		}
+
+	}
+
+	return &manager, nil
+}
+
+func (m *Manager) handleLog(record storage.OffsetRecord) error {
+	var event Event
+	if err := json.Unmarshal(record.Record, &event); err != nil {
+		return err
+	}
+
+	switch event.Eventtype {
+	case "workspace.full":
+		{
+			var ws Workspace
+			if err := json.Unmarshal(event.Event, &ws); err != nil {
+				slog.Error("error reading event", "type", event.Eventtype, "error", err, "data", event.Event)
+				return err
+			}
+			m.items[ws.Id.String()] = &ws
+		}
+	case "workspace.delete":
+		{
+			var wsid uuid.UUID
+			if err := json.Unmarshal(event.Event, &wsid); err != nil {
+				slog.Error("error reading event", "type", event.Eventtype, "error", err, "data", event.Event)
+				return err
+			}
+			delete(m.items, wsid.String())
+		}
+
+	}
+	return nil
+
 }
 
 func (m *Manager) Create(owner string) *Workspace {
@@ -42,7 +110,8 @@ func (m *Manager) Create(owner string) *Workspace {
 			Port:         m.nextPort(),
 		},
 	}
-	m.items = append(m.items, ws)
+	m.items[ws.Id.String()] = ws
+	m.appendEvent("workspace.full", ws)
 	go func() {
 		if err := os.MkdirAll(ws.workspaceDir(), os.ModePerm); err != nil {
 			slog.Default().Error("failed to create workspace directory", "error", err)
@@ -58,12 +127,15 @@ func (m *Manager) Create(owner string) *Workspace {
 }
 
 func (m *Manager) ByIdAndOwner(id uuid.UUID, owner string) (res *Workspace, found bool) {
-	for _, w := range m.items {
-		if w.Owner == owner && w.Id == id {
-			return w, true
-		}
+	ws, ok := m.items[id.String()]
+	if !ok {
+		return nil, false
+
 	}
-	return res, false
+	if ws.Owner != owner {
+		return nil, false
+	}
+	return ws, true
 }
 
 func (m *Manager) AllByOwner(owner string) (res []*Workspace) {
@@ -76,13 +148,16 @@ func (m *Manager) AllByOwner(owner string) (res []*Workspace) {
 }
 
 func (m *Manager) DeleteByIdAndOwner(id uuid.UUID, owner string) bool {
-	for i, w := range m.items {
-		if w.Owner == owner && w.Id == id {
-			m.items = append(m.items[:i], m.items[i+1:]...)
-			return true
-		}
+	ws, ok := m.items[id.String()]
+	if !ok {
+		return false
 	}
-	return false
+	if ws.Owner != owner {
+		return false
+	}
+	delete(m.items, ws.Id.String())
+	go m.appendEvent("workspace.delete", ws.Id)
+	return true
 }
 
 func (m *Manager) GetProjectStatus(username string, workspaceId uuid.UUID, projectId uuid.UUID) (res ProjectStatus, _ error) {
@@ -111,6 +186,37 @@ func (m *Manager) nextPort() int {
 		}
 	}
 	return port
+}
+
+func (m *Manager) appendEvent(eventtype string, ws any) error {
+	if m.log != nil {
+		payload, err := json.Marshal(ws)
+		if err != nil {
+			return err
+		}
+
+		rawEvent, err := json.Marshal(Event{
+			Eventtype: eventtype,
+			Event:     payload,
+		})
+		if err != nil {
+			return err
+		}
+		_, _, err = m.log.appender.Append(rawEvent)
+		return err
+	}
+	return nil
+
+}
+
+func (m *Manager) AddProject(workspace *Workspace, p string, url string, name string) {
+	workspace.addProject(p, url, name)
+	go m.appendEvent("workspace.full", workspace)
+}
+
+func (m *Manager) DeleteProjectById(workspace *Workspace, id uuid.UUID) {
+	workspace.deleteProjectById(id)
+	go m.appendEvent("workspace.full", workspace)
 }
 
 func isGitRepo(dir string) bool {
