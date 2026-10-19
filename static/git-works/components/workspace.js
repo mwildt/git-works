@@ -3,77 +3,124 @@ import './atomic/button.js';
 import './atomic/error-message.js';
 import './commit-form.js';
 
+customElements.define('gw-workspace-project', class extends LitElement {
 
-customElements.define('gw-workspace-project-status', class extends LitElement {
     static properties = {
         status: {},
+        project: {},
+        commit: {},
         workspaceId: {},
-        projectId: {}
+        committing: {}
     };
 
-    constructor(props) {
-        super(props);
-        this.status = {}
-        this.reload()
+    constructor() {
+        super();
+        this.commit = undefined;
+        this.status = {};
+        this.committing = false;
     }
 
     async connectedCallback() {
         super.connectedCallback()
-        this.reload()
+        this.loadStatus();
     }
 
-    render() {
-        return html`
-            ${this.status.initialized
-                    ? html`<gw-badge ok>Initialisiert</gw-badge>`
-                    : html`<gw-badge warn>Nicht initialisiert</span>`}
-            ${this.status.initialized
-                    ? (this.status.has_changes
-                            ? html`<gw-badge warn>Änderungen vorhanden</span>`
-                            : html`<gw-badge ok>Keine Änderungen</gw-badge >`)
-                    : undefined}
-        `
-    }
-
-    async reload() {
-        if (this.workspaceId) {
-            const response = await fetch(`/api/workspace/${this.workspaceId}/project/${this.projectId}/status`);
-            this.status = await response.json();
-            console.warn(this.status)
-        }
-    }
-
-})
-
-customElements.define('gw-workspace-project', class extends LitElement {
-
-    static properties = {
-        project: {},
-        workspaceId: {}
-    };
 
     render() {
 
         return html`
             <h4>${this.project.git_url} &#8594 ${this.project.path} </h4>
-
             <pre>${JSON.stringify(this.project)}</pre>
-         
             <gw-row-footer>
                 <div>
                     <div> branch: ${this.project.branch} 
                         | path: ${this.project.path} 
                         | ${this.project.id}
                     </div>
-                    <gw-workspace-project-status .workspaceId=${this.workspaceId} .projectId=${this.project.id}></gw-workspace-project-status>
+                    ${this.status.initialized
+                            ? html`<gw-badge ok>Initialisiert</gw-badge>`
+                            : html`<gw-badge warn>Nicht initialisiert</span>`}
+                    ${this.status.initialized
+                            ? (this.status.has_changes
+                                    ? html`<gw-badge warn>Änderungen vorhanden</span>`
+                                    : html`<gw-badge ok>Keine Änderungen</gw-badge >`)
+                            : undefined}
                 </div>
 
                 <div slot="actions">
+                    <gw-button @click=${() => this.init()}>Init</gw-button>
+                    ${this.status.has_changes
+                            ? html`<gw-button danger @click=${() => this.commit = {}}>Commit</gw-button>`
+                            : undefined}
                     <gw-button danger @click=${() => this.removeProject()}>Löschen</gw-button>
                 </div>
             </gw-row-footer>
+
+            ${this.commit
+                    ? html`<gw-commit-form .project=${this.project} .committing=${this.committing} .commitBranch=${this.project.branch}
+                           @gw-commit-form::commit=${(e) => this.handleCommit(e.detail)}
+                           @gw-commit-form::cancel=${() => this.commit = undefined}
+                    ></gw-commit-form>`
+                    : undefined}
         `
     }
+
+
+    async handleCommit(data) {
+        this.committing = true;
+        try {
+            const response = await fetch(`/api/workspace/${this.workspaceId}/project/${this.project.id}/commit`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            this.commit = undefined
+            await this.loadStatus();
+        } catch (error) {
+            this.dispatchEvent(new CustomEvent('gw-workspace::commit-error', {
+                detail: { message: 'Commit fehlgeschlagen: ' + error.message },
+                bubbles: true,
+                composed: true
+            }));
+        } finally {
+            this.committing = false;
+        }
+    }
+
+    async loadStatus() {
+        if (!this.project) {
+            return
+        }
+        const response = await fetch(`/api/workspace/${this.workspaceId}/project/${this.project.id}/status`);
+        if (!response.ok) {
+            alert('Status fehlgeschlagen')
+            throw new Error(`HTTP ${response.status}`);
+        }
+        this.status = await response.json();
+    }
+
+    async init() {
+        const response = await fetch(`/api/workspace/${this.workspaceId}/project/${this.project.id}/init`, {
+            method: "POST"
+        });
+        if (!response.ok) {
+            alert('Init fehlgeschlagen')
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        this.dispatchEvent(new CustomEvent('gw-workspace-project::init-success', {
+            detail: this.workload,
+            bubbles: true,
+            composed: true,
+        }));
+    }
+
+
 
     async removeProject(project) {
         const delResponse = await fetch(`/api/workspace/${this.workspaceId}/project/${this.project.id}`, {
@@ -197,7 +244,11 @@ customElements.define('gw-workspace-workload', class extends LitElement {
 
     async activate() {
         const response = await fetch(`/api/workspace/${this.workspaceId}/workload/${this.workload.id}/activate`, {
-            method: "POST"
+            method: "POST",
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                location: window.location.href.replace(window.location.origin, '')
+            })
         });
         if (!response.ok) {
             alert('Activate fehlgeschlagen')

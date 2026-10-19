@@ -6,8 +6,15 @@ export class GwMixin extends LitElement {
         <drag-panel title="git-works">
             <a @click=${async e => {
                 e.preventDefault();
-                await fetch("/.git-works/session-mode", {method: 'PATCH'})
-                location.reload()
+                const response = await fetch("/.git-works/session-mode", {method: 'PATCH'})
+                if (response.ok) {
+                    const loc = await response.json();
+                    window.location.href = loc.location;
+                } else {
+                    location.reload()    
+                }
+                
+                
             }}>Zurück</a>
         </drag-panel>  
     `;

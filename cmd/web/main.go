@@ -98,12 +98,28 @@ func main() {
 			http.Error(writer, "invalid cookie", http.StatusUnauthorized)
 			return
 		}
+
+		var location struct {
+			Location string `json:"location"`
+		}
+
+		session, ok := auth.ReadSession(request.Context())
+		if ok {
+			location.Location = session.ActiveWorkload.Location
+		}
+
 		if err := sessionManager.ActivateWorkspace(cookie.Value, auth.WorkloadReference{}); err != nil {
 			slog.Default().Warn("cookie not found")
 			http.Error(writer, "invalid cookie", http.StatusBadRequest)
 			return
 		}
+
+		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusAccepted)
+		if err := json.NewEncoder(writer).Encode(location); err != nil {
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+		}
+
 	})
 
 	opencode.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
@@ -124,20 +140,24 @@ func main() {
 		request.Header.Set("Authorization", fmt.Sprintf("Basic %s", workload.Data.BasicAuth()))
 		target, _ := url.Parse(workload.TargetUrl())
 		proxy := httputil.NewSingleHostReverseProxy(target)
+		proxy.FlushInterval = -1
 
 		proxy.ModifyResponse = func(resp *http.Response) error {
-			ct := resp.Header.Get("Content-Type")
-			if !strings.Contains(ct, "text/html") {
+			contentType := resp.Header.Get("Content-Type")
+			if !strings.Contains(contentType, "text/html") {
 				return nil
 			}
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 
-			const injectTag = "<script type=\"module\" crossorigin src=\"./.gw-mixin/index.js\" defer></script>"
+			const injectTag = "<script type=\"module\" crossorigin src=\"/.gw-mixin/index.js\" defer></script>"
 			lower := bytes.ToLower(body)
 			idx := bytes.LastIndex(lower, []byte("</body>"))
 			if idx == -1 {
-				return nil // kein </body>, nichts injizieren
+				resp.Body = io.NopCloser(bytes.NewReader(body))
+				resp.ContentLength = int64(len(body))
+				resp.Header.Set("Content-Length", fmt.Sprint(len(body)))
+				return nil
 			}
 			var out bytes.Buffer
 			out.Write(body[:idx])
@@ -293,6 +313,12 @@ func main() {
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
+}
+
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func withTraceLog(next http.Handler) http.Handler {

@@ -190,6 +190,19 @@ func (s *Service) DeleteProject(ctx context.Context, workspaceId uuid.UUID, proj
 	return nil
 }
 
+func (s *Service) ProjectCommitPush(ctx context.Context, workspaceId uuid.UUID, projectId uuid.UUID, request CommitRequest) error {
+	workspace, project, err := s.repo.ProjectById(ctx, workspaceId, projectId)
+	if err != nil {
+		return err
+	}
+	token, ok := auth.Token(ctx)
+	if !ok {
+		return Forbidden
+	}
+	slog.Default().Info("commit push", "workspaceId", workspaceId, "projectId", projectId, "branch", request.Branch)
+	return s.gitClient.CommitAndPush(token, path.Join(workspace.workspaceDir(), project.Path), request.Message, request.Branch)
+}
+
 func isGitRepo(dir string) bool {
 	info, err := os.Stat(path.Join(dir, ".git"))
 	return err == nil && info.IsDir()

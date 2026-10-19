@@ -133,8 +133,13 @@ func (workload Workload) Action(token gitlab.Token, actions *actions.Client, act
 }
 
 func (workload Workload) Init(basedir string) error {
-	// TODO: eine opencode config muss nochmal geladen werden
-	opencodeConfig := []byte("{}")
+
+	source := config.GetEnv("OPENCODE_TEMPLATE_FILE", "opencode.json")
+	slog.Default().Info("init workload", "workloadid", workload.Id.String(), "basedir", basedir, "config-source", source)
+	opencodeConfig, err := os.ReadFile(source)
+	if err != nil {
+		return err
+	}
 	opencodeFile := path.Join(basedir, fmt.Sprintf("opencode.%s.json", workload.Id.String()))
 	if err := os.WriteFile(opencodeFile, opencodeConfig, 0644); err != nil {
 		slog.Default().Error("Error creating opencode file", "error", err)

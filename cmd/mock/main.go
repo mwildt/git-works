@@ -46,6 +46,10 @@ func main() {
 
 		slog.Default().Info("run new pipeline ", "pipelineID", pipelineID, "variables", body.Variables, "ref", body.Ref)
 
+		workspaceId := body.Variables["WORKSPACE_ID"]
+		workloadId := body.Variables["WORKLOAD_ID"]
+
+		opencodeFile := fmt.Sprintf("opencode.%s.json", workloadId)
 		if body.Variables["JOB"] == "OC_UP" {
 			args := []string{
 				"run", "-d", "--replace", "--rm",
@@ -53,7 +57,8 @@ func main() {
 				"-e", "OPENCODE_SERVER_USERNAME=" + body.Variables["OPENCODE_SERVER_USERNAME"],
 				"-e", "OPENCODE_SERVER_PASSWORD=" + body.Variables["OPENCODE_SERVER_PASSWORD"],
 				"-p", fmt.Sprintf("%s:4096", body.Variables["PORT"]),
-				"-v", fmt.Sprintf("./data/%s/workspace:/workspace", body.Variables["WORKSPACE_ID"]),
+				"-v", fmt.Sprintf("./data/%s/workspace:/workspace", workspaceId),
+				"-v", fmt.Sprintf("./data/%s/%s:/workspace/opencode.json:ro", workspaceId, opencodeFile),
 				"opencode-web",
 			}
 

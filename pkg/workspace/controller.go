@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 	"uuid"
 
@@ -15,6 +16,11 @@ type Controller struct {
 	repo           *Repository
 	service        *Service
 	sessionManager *auth.Manager
+}
+
+type CommitRequest struct {
+	Message string `json:"message"`
+	Branch  string `json:"branch"`
 }
 
 func NewController(repo *Repository, service *Service, sessionManager *auth.Manager) (*Controller, error) {
@@ -217,6 +223,35 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 		writer.WriteHeader(http.StatusAccepted)
 	})
 
+	api.HandleFunc("POST /api/workspace/{workspaceId}/project/{projectId}/commit", func(writer http.ResponseWriter, request *http.Request) {
+		workspaceId, err := uuid.Parse(request.PathValue("workspaceId"))
+		if err != nil {
+			http.Error(writer, "invalid ws id", http.StatusBadRequest)
+			return
+		}
+		projectId, err := uuid.Parse(request.PathValue("projectId"))
+		if err != nil {
+			http.Error(writer, "invalid projectId", http.StatusBadRequest)
+			return
+		}
+		var commitRequest CommitRequest
+		if err := json.NewDecoder(request.Body).Decode(&commitRequest); err != nil {
+			http.Error(writer, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(commitRequest.Message) == "" {
+			http.Error(writer, "message is required", http.StatusBadRequest)
+			return
+		}
+
+		if err := service.ProjectCommitPush(request.Context(), workspaceId, projectId, commitRequest); err != nil {
+			slog.Default().Error("failed to push commit", "error", err)
+			sendError(writer, err)
+			return
+		}
+		writer.WriteHeader(http.StatusAccepted)
+	})
+
 	api.HandleFunc("GET /api/workspace/{workspaceId}/workload/{workloadId}/status", func(writer http.ResponseWriter, request *http.Request) {
 		workspaceId, err := uuid.Parse(request.PathValue("workspaceId"))
 		if err != nil {
@@ -347,7 +382,13 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 		if !ok {
 			http.Error(writer, "not found", http.StatusForbidden)
 		}
-
+		var location struct {
+			Location string `json:"location"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&location); err != nil {
+			http.Error(writer, "invalid JSON", http.StatusBadRequest)
+			return
+		}
 		workspace, workload, err := ctrl.repo.WorkloadById(request.Context(), workspaceId, workloadId)
 		if err != nil {
 			http.Error(writer, "invalid workloadId", http.StatusBadRequest)
@@ -364,6 +405,7 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			return
 		}
 		if err := ctrl.sessionManager.ActivateWorkspace(session.Id, auth.WorkloadReference{
+			Location:    location.Location,
 			WorkspaceId: workspace.Id,
 			WorkloadId:  workload.Id,
 		}); err != nil {

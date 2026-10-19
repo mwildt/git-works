@@ -25,7 +25,6 @@ customElements.define('gw-commit-form', class extends LitElement {
             margin: 8px 0;
             background-color: #f9f9f9;
             border-radius: 8px;
-            border-left: 4px solid #4CAF50;
         }
 
         .commit-form-actions {

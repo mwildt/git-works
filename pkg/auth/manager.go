@@ -26,8 +26,9 @@ const (
 )
 
 type WorkloadReference struct {
-	WorkspaceId uuid.UUID `json:"workspaceId"`
-	WorkloadId  uuid.UUID `json:"workloadId"`
+	Location    string
+	WorkspaceId uuid.UUID
+	WorkloadId  uuid.UUID
 }
 
 func NilWorkloadReference() WorkloadReference {

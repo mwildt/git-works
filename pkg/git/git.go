@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path"
 	"strings"
 	"time"
 
@@ -69,4 +70,62 @@ func (g *Git) Clone(token gitlab.Token, url string, path string, branch string) 
 		return fmt.Errorf("git clone failed after %d attempts: %s", g.maxRetries+1, lastErr.Error())
 	}
 	return nil
+}
+
+func (g *Git) CommitAndPush(token gitlab.Token, dir string, message string, branch string) error {
+	if !isGitRepo(dir) {
+		return fmt.Errorf("unable to commit, %s is not a git repo", dir)
+	}
+
+	steps := [][]string{
+		{"add", "-A"},
+		{"commit", "-m", message},
+	}
+	for _, args := range steps {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = os.Environ()
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git %s failed: %s (%s)", args[0], err.Error(), strings.TrimSpace(string(output)))
+		}
+	}
+
+	if branch == "" {
+		branch = "HEAD"
+	} else if current, err := currentBranch(dir); err == nil && branch != current {
+		cmd := exec.Command("git", "-C", dir, "checkout", "-B", branch)
+		cmd.Env = append(os.Environ(),
+			"SSH_ASKPASS_REQUIRE=force",
+			fmt.Sprintf("SSH_ASKPASS=%s", config.GetEnv("SSH_ASKPASS", "/usr/local/bin/git-askpass")),
+			fmt.Sprintf("GIT_TOKEN=%s", token.Value),
+		)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git checkout failed: %s (%s)", err.Error(), strings.TrimSpace(string(output)))
+		}
+	}
+
+	slog.Info("pushing", "dir", dir, "branch", branch)
+	cmd := exec.Command("git", "-C", dir, "push", "-u", "origin", branch)
+	cmd.Env = append(os.Environ(),
+		"SSH_ASKPASS_REQUIRE=force",
+		fmt.Sprintf("SSH_ASKPASS=%s", config.GetEnv("SSH_ASKPASS", "/usr/local/bin/git-askpass")),
+		fmt.Sprintf("GIT_TOKEN=%s", token.Value),
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git push failed: %s (%s)", err.Error(), strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func currentBranch(dir string) (string, error) {
+	output, err := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func isGitRepo(dir string) bool {
+	info, err := os.Stat(path.Join(dir, ".git"))
+	return err == nil && info.IsDir()
 }
