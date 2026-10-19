@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path"
 	"strconv"
 	"text/template"
@@ -18,9 +19,17 @@ import (
 	"gtihub.com/mwildt/git-works/pkg/config"
 	"gtihub.com/mwildt/git-works/pkg/git"
 	"gtihub.com/mwildt/git-works/pkg/gitlab"
+	"gtihub.com/mwildt/git-works/pkg/misc"
 )
 
 type (
+	Workload struct {
+		Id          uuid.UUID
+		WorkspaceId uuid.UUID
+		Type        string
+		Data        OpencodeConfig
+	}
+
 	Project struct {
 		Id     uuid.UUID `json:"id"`
 		Path   string    `json:"path,omitempty"`
@@ -37,20 +46,102 @@ type (
 	}
 
 	Workspace struct {
-		Id       uuid.UUID
-		Name     string
-		Owner    string
-		Projects []Project
-		Created  time.Time
-		Opencode OpencodeConfig
-	}
-
-	ProjectStatus struct {
-		ProjectId   uuid.UUID `json:"project_id"`
-		Initialized bool      `json:"initialized"`
-		HasChanges  bool      `json:"has_changes"`
+		Id        uuid.UUID
+		Name      string
+		Owner     string
+		Projects  []Project
+		Workloads []Workload
+		Created   time.Time
+		Opencode  OpencodeConfig
 	}
 )
+
+func NewWorkspace(owner string) Workspace {
+	return Workspace{
+		Id:        uuid.NewV4(),
+		Owner:     owner,
+		Name:      misc.RandomName(),
+		Created:   time.Now(),
+		Projects:  []Project{},
+		Workloads: []Workload{},
+	}
+}
+
+func (workload Workload) WorkloadType() string {
+	return workload.Type
+}
+
+func (workload Workload) Status(opencodeActions *actions.Client) (string, error) {
+	if workload.Type != "OpenCode" {
+		return "", errors.New("invalid workspace type")
+	}
+	ocConfig := workload.Data
+
+	res, err := opencodeActions.Send(context.Background(), "OPENCODE_WORKSPACE_HEALTH", map[string]string{
+		"workspaceId":      workload.WorkspaceId.String(),
+		"workloadId":       workload.Id.String(),
+		"name":             ocConfig.Key,
+		"port":             strconv.Itoa(ocConfig.Port),
+		"oc_password":      ocConfig.AuthPassword,
+		"oc_username":      ocConfig.AuthUsername,
+		"oc_authorization": fmt.Sprintf("Basic %s", ocConfig.BasicAuth()),
+	})
+	if err != nil {
+		slog.Default().Warn("unable to run OPENCODE_WORKSPACE_HEALTH", "error", err.Error())
+		return "down", nil
+	} else if res.StatusCode != 200 {
+		body, _ := io.ReadAll(res.Body)
+		slog.Default().Warn("status != 200 when running OPENCODE_WORKSPACE_HEALTH", "status", res.StatusCode, "code", res.StatusCode, "body", string(body))
+		return "down", nil
+	}
+	return "up", nil
+}
+
+func (workload Workload) Start(token gitlab.Token, actions *actions.Client, workspaceId uuid.UUID) error {
+	return workload.Action(token, actions, "OPENCODE_START", workspaceId)
+}
+
+func (workload Workload) Stop(token gitlab.Token, actions *actions.Client, workspaceId uuid.UUID) error {
+	return workload.Action(token, actions, "OPENCODE_STOP", workspaceId)
+}
+
+func (workload Workload) Action(token gitlab.Token, actions *actions.Client, action string, workspaceId uuid.UUID) error {
+	if workload.Type != "OpenCode" {
+		return errors.New("invalid workspace type")
+	}
+	ocConfig := workload.Data
+	slog.Default().Info("Run workspace action", "action", action, "name", ocConfig.Key, "id", workload.Id.String(), "port", ocConfig.Port)
+	res, err := actions.Send(context.Background(), action, map[string]string{
+		"workspaceId": workspaceId.String(),
+		"workloadId":  workload.Id.String(),
+		"name":        ocConfig.Key,
+		"port":        strconv.Itoa(ocConfig.Port),
+		"oc_password": ocConfig.AuthPassword,
+		"oc_username": ocConfig.AuthUsername,
+		"token_type":  token.TokenType,
+		"token_value": token.Value,
+	})
+	if err != nil {
+		slog.Default().Error("Failed to start workspace", "name", ocConfig.Key, "id", workload.Id.String(), "err", err)
+		return err
+	}
+	if res.StatusCode >= 300 {
+		slog.Default().Error("Failed to start workspace", "name", ocConfig.Key, "id", workload.Id.String(), "status_code", res.StatusCode)
+		return errors.New(res.Status)
+	}
+	return nil
+}
+
+func (workload Workload) Init(basedir string) error {
+	// TODO: eine opencode config muss nochmal geladen werden
+	opencodeConfig := []byte("{}")
+	opencodeFile := path.Join(basedir, fmt.Sprintf("opencode.%s.json", workload.Id.String()))
+	if err := os.WriteFile(opencodeFile, opencodeConfig, 0644); err != nil {
+		slog.Default().Error("Error creating opencode file", "error", err)
+		return err
+	}
+	return nil
+}
 
 func (c OpencodeConfig) BasicAuth() any {
 	return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", c.AuthUsername, c.AuthPassword)))
@@ -72,6 +163,16 @@ func (w *Workspace) deleteProjectById(value uuid.UUID) bool {
 	for i, project := range w.Projects {
 		if project.Id == value {
 			w.Projects = append(w.Projects[:i], w.Projects[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func (w *Workspace) deleteWorkloadById(value uuid.UUID) bool {
+	for i, workload := range w.Workloads {
+		if workload.Id == value {
+			w.Workloads = append(w.Workloads[:i], w.Workloads[i+1:]...)
 			return true
 		}
 	}
@@ -111,78 +212,27 @@ func (w *Workspace) ProjectById(id uuid.UUID) (Project, bool) {
 	return Project{}, false
 }
 
-func (w *Workspace) Start(token gitlab.Token, client *actions.Client) error {
-	slog.Default().Info("Starting workspace", "name", w.Name, "id", w.Id.String(), "port", w.Opencode.Port)
-	res, err := client.Send(context.Background(), "OPENCODE_START", map[string]string{
-		"wsid":        w.Id.String(),
-		"name":        w.Opencode.Key,
-		"port":        strconv.Itoa(w.Opencode.Port),
-		"oc_password": w.Opencode.AuthPassword,
-		"oc_username": w.Opencode.AuthUsername,
-		"token_type":  token.TokenType,
-		"token_value": token.Value,
-	})
-	if err != nil {
-		slog.Default().Error("Failed to start workspace", "name", w.Name, "id", w.Id.String(), "err", err)
-		return err
+func (w *Workspace) WorkloadById(id uuid.UUID) (Workload, bool) {
+	for _, workload := range w.Workloads {
+		if workload.Id == id {
+			return workload, true
+		}
 	}
-	if res.StatusCode >= 300 {
-		slog.Default().Error("Failed to start workspace", "name", w.Name, "id", w.Id.String(), "status_code", res.StatusCode)
-		return errors.New(res.Status)
-	}
-	return nil
+	return Workload{}, false
 }
 
-func (w *Workspace) Stop(token gitlab.Token, client *actions.Client) error {
-	slog.Default().Info("Starting workspace", "name", w.Name, "id", w.Id.String(), "port", w.Opencode.Port)
-	res, err := client.Send(context.Background(), "OPENCODE_STOP", map[string]string{
-		"wsid":        w.Id.String(),
-		"name":        w.Opencode.Key,
-		"port":        strconv.Itoa(w.Opencode.Port),
-		"oc_password": w.Opencode.AuthPassword,
-		"oc_username": w.Opencode.AuthUsername,
-		"token_type":  token.TokenType,
-		"token_value": token.Value,
-	})
-	if err != nil {
-		slog.Default().Error("Failed to start workspace", "name", w.Name, "id", w.Id.String(), "err", err)
-		return err
-	}
-	if res.StatusCode >= 300 {
-		slog.Default().Error("Failed to start workspace", "name", w.Name, "id", w.Id.String(), "status_code", res.StatusCode)
-		return errors.New(res.Status)
-	}
-	return nil
-}
-
-func (w *Workspace) Status(opencodeActions *actions.Client) string {
-	res, err := opencodeActions.Send(context.Background(), "OPENCODE_WORKSPACE_HEALTH", map[string]string{
-		"wsid":             w.Id.String(),
-		"name":             w.Opencode.Key,
-		"port":             strconv.Itoa(w.Opencode.Port),
-		"oc_password":      w.Opencode.AuthPassword,
-		"oc_username":      w.Opencode.AuthUsername,
-		"oc_authorization": fmt.Sprintf("Basic %s", w.Opencode.BasicAuth()),
-	})
-	if err != nil {
-		slog.Default().Warn("unable to run OPENCODE_WORKSPACE_HEALTH", "error", err.Error())
-		return "down"
-	} else if res.StatusCode != 200 {
-		body, _ := io.ReadAll(res.Body)
-		slog.Default().Warn("status != 200 when running OPENCODE_WORKSPACE_HEALTH", "status", res.StatusCode, "code", res.StatusCode, "body", string(body))
-		return "down"
-	}
-	return "up"
-}
-
-func (w *Workspace) TargetUrl() string {
+func (w Workload) TargetUrl() string {
 	urlTemplate := config.GetEnv("OPENCODE_TARGET_URL", "http://{{.host}}:{{.port}}/")
 	t := template.Must(template.New("tpl").Parse(urlTemplate))
 	var buf bytes.Buffer
 	t.Execute(&buf, map[string]any{
-		"host": w.Opencode.Host,
-		"port": strconv.Itoa(w.Opencode.Port),
-		"wsid": w.Id.String(),
+		"host":        w.Data.Host,
+		"port":        strconv.Itoa(w.Data.Port),
+		"workspaceId": w.Id.String(),
 	})
 	return buf.String()
+}
+
+func (w *Workspace) HasOwner(owner string) bool {
+	return w.Owner == owner
 }

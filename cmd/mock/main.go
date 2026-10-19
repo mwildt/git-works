@@ -53,7 +53,7 @@ func main() {
 				"-e", "OPENCODE_SERVER_USERNAME=" + body.Variables["OPENCODE_SERVER_USERNAME"],
 				"-e", "OPENCODE_SERVER_PASSWORD=" + body.Variables["OPENCODE_SERVER_PASSWORD"],
 				"-p", fmt.Sprintf("%s:4096", body.Variables["PORT"]),
-				"-v", fmt.Sprintf("./data/%s/workspace:/workspace", body.Variables["WSID"]),
+				"-v", fmt.Sprintf("./data/%s/workspace:/workspace", body.Variables["WORKSPACE_ID"]),
 				"opencode-web",
 			}
 

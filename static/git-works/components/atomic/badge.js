@@ -11,6 +11,7 @@ customElements.define('gw-badge', class extends LitElement {
     static styles = css`
         :host {
             display: inline-block;
+            align-self: flex-start;
             font-size: 12px;
             padding: 4px 10px;
             border-radius: 12px;

@@ -25,11 +25,20 @@ const (
 	sessionTTL = 12 * time.Hour
 )
 
+type WorkloadReference struct {
+	WorkspaceId uuid.UUID `json:"workspaceId"`
+	WorkloadId  uuid.UUID `json:"workloadId"`
+}
+
+func NilWorkloadReference() WorkloadReference {
+	return WorkloadReference{}
+}
+
 type Session struct {
-	Id              string
-	Token           gitlab.Token
-	Username        string
-	ActiveWorkspace uuid.UUID
+	Id             string
+	Token          gitlab.Token
+	Username       string
+	ActiveWorkload WorkloadReference
 }
 
 type Manager struct {
@@ -49,10 +58,10 @@ func (m *Manager) CreateSession(token gitlab.Token) (Session, error) {
 		return Session{}, err
 	}
 	session := Session{
-		Id:              id,
-		Token:           token,
-		Username:        user.Username,
-		ActiveWorkspace: uuid.Nil(),
+		Id:             id,
+		Token:          token,
+		Username:       user.Username,
+		ActiveWorkload: WorkloadReference{},
 	}
 	m.sessions[id] = &session
 	return session, nil
@@ -66,14 +75,14 @@ func (m *Manager) Validate(value string) (Session, error) {
 	return *sess, nil
 }
 
-func (m *Manager) ActivateWorkspace(sessionId string, wsid uuid.UUID) error {
+func (m *Manager) ActivateWorkspace(sessionId string, workload WorkloadReference) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	sess, ok := m.sessions[sessionId]
 	if !ok {
 		return fmt.Errorf("session not found")
 	}
-	sess.ActiveWorkspace = wsid
+	sess.ActiveWorkload = workload
 	return nil
 }
 

@@ -14,7 +14,8 @@ requests:
         "ref": "main",
         "variables": {
           "JOB": "OC_UP",
-          "WSID": "{{.wsid}}",
+          "WORKSPACE_ID": "{{.workspaceId}}",
+          "WORKLOAD_ID": "{{.workloadId}}",
           "NAME": "{{.name}}",
           "PORT": "{{.port}}",
           "OPENCODE_SERVER_USERNAME": "{{.oc_username}}",
@@ -31,7 +32,8 @@ requests:
         "ref": "main",
         "variables": {
           "JOB": "OC_STOP",
-          "WSID": "{{.wsid}}",
+          "WORKSPACE_ID": "{{.workspaceId}}",
+          "WORKLOAD_ID": "{{.workloadId}}",
           "NAME": "{{.name}}",
           "PORT": "{{.port}}",
           "OPENCODE_SERVER_USERNAME": "{{.oc_username}}",

@@ -3,102 +3,11 @@ import './atomic/button.js';
 import './atomic/error-message.js';
 import './commit-form.js';
 
-customElements.define('gw-workspace-status', class extends LitElement {
-    static properties = {
-        status: {},
-        wsid: {}
-    };
-
-    constructor(props) {
-        super(props);
-        this.status = {}
-        this.reload()
-    }
-
-    async connectedCallback() {
-        super.connectedCallback()
-        this.reload()
-    }
-
-
-    render() {
-        return html`Opencode-Container-Status: ${this.status.status == "up"
-                ? html`<gw-badge ok>UP</gw-badge>` 
-                :  this.status.status == "down" 
-                        ? html`<gw-badge warn>Down</gw-badge>` 
-                        : html`<gw-badge error>Unknown</gw-badge>` }`
-    }
-
-    async reload() {
-        if (this.wsid) {
-            const response = await fetch(`/api/workspace/${this.wsid}/status`);
-            this.status = await response.json();
-            console.warn(this.status)
-        }
-    }
-
-})
-
-
-customElements.define('gw-workspace-oc-control', class extends LitElement {
-    static properties = {
-        wsid: {}
-    };
-
-    constructor(props) {
-        super(props);
-    }
-
-    async connectedCallback() {
-        super.connectedCallback()
-    }
-
-
-    render() {
-        return html`
-            <gw-button @click=${() => this.start()}>Start</gw-button>
-            <gw-button @click=${() => this.stop()}>Stop</gw-button>
-            <gw-button @click=${() => this.activate()}>Aktivieren</gw-button>
-        `
-    }
-
-    async activate() {
-        const resp = await fetch(`/api/workspace/${this.wsid}/activate`, {
-            method: "POST"
-        });
-        if (!resp.ok) {
-            alert('Aktivieren fehlgeschlagen')
-            throw new Error(`HTTP ${resp.status}`);
-        } else {
-            location.reload()
-        }
-    }
-    async start() {
-        const resp = await fetch(`/api/workspace/${this.wsid}/oc-up`, {
-            method: "POST"
-        });
-        if (!resp.ok) {
-            alert('Start fehlgeschlagen')
-            throw new Error(`HTTP ${resp.status}`);
-        }
-    }
-
-    async stop() {
-        const resp = await fetch(`/api/workspace/${this.wsid}/oc-down`, {
-            method: "POST"
-        });
-        if (!resp.ok) {
-            alert('Stop fehlgeschlagen')
-            throw new Error(`HTTP ${resp.status}`);
-        }
-    }
-
-})
 
 customElements.define('gw-workspace-project-status', class extends LitElement {
     static properties = {
         status: {},
-        wsid: {},
+        workspaceId: {},
         projectId: {}
     };
 
@@ -127,8 +36,8 @@ customElements.define('gw-workspace-project-status', class extends LitElement {
     }
 
     async reload() {
-        if (this.wsid) {
-            const response = await fetch(`/api/workspace/${this.wsid}/project/${this.projectId}/status`);
+        if (this.workspaceId) {
+            const response = await fetch(`/api/workspace/${this.workspaceId}/project/${this.projectId}/status`);
             this.status = await response.json();
             console.warn(this.status)
         }
@@ -140,29 +49,34 @@ customElements.define('gw-workspace-project', class extends LitElement {
 
     static properties = {
         project: {},
-        wsid: {}
+        workspaceId: {}
     };
 
     render() {
 
         return html`
             <h4>${this.project.git_url} &#8594 ${this.project.path} </h4>
-            
-            <div>
-                <gw-workspace-project-status .wsid=${this.wsid} .projectId=${this.project.id}></gw-workspace-project-status>
-            </div>
-            
-            <div>
-                <span>branch: ${this.project.branch} 
-                    | path: ${this.project.path} 
-                    | ${this.project.id} 
-                    | <gw-action @click=${() => this.removeProject()}>Entfernen</gw-action>
-            </div>
+
+            <pre>${JSON.stringify(this.project)}</pre>
+         
+            <gw-row-footer>
+                <div>
+                    <div> branch: ${this.project.branch} 
+                        | path: ${this.project.path} 
+                        | ${this.project.id}
+                    </div>
+                    <gw-workspace-project-status .workspaceId=${this.workspaceId} .projectId=${this.project.id}></gw-workspace-project-status>
+                </div>
+
+                <div slot="actions">
+                    <gw-button danger @click=${() => this.removeProject()}>Löschen</gw-button>
+                </div>
+            </gw-row-footer>
         `
     }
 
     async removeProject(project) {
-        const delResponse = await fetch(`/api/workspace/${this.wsid}/project/${this.project.id}`, {
+        const delResponse = await fetch(`/api/workspace/${this.workspaceId}/project/${this.project.id}`, {
             method: "DELETE"
         });
         if (!delResponse.ok) {
@@ -179,11 +93,141 @@ customElements.define('gw-workspace-project', class extends LitElement {
 
 })
 
+customElements.define('gw-workspace-workload', class extends LitElement {
+
+    static properties = {
+        status: {},
+        workload: {},
+        workspaceId: {}
+    };
+
+    constructor() {
+        super();
+        this.status = {}
+
+    }
+
+    async connectedCallback() {
+        super.connectedCallback()
+        this.loadStatus();
+    }
+
+    render() {
+        return html`
+            <h4>${this.workload.name}</h4>
+            <pre>${JSON.stringify(this.workload)}</pre>
+            <gw-row-footer>
+                ${this.status && this.status.status == "up"
+                        ? html`<gw-badge ok>UP</gw-badge>`
+                        : this.status.status == "down"
+                                ? html`<gw-badge warn>Down</gw-badge>`
+                                : html`<gw-badge error>Unknown</gw-badge>`}\`
+                <div slot="actions">
+                    <gw-button @click=${() => this.loadStatus()}>Status</gw-button>
+                    <gw-button @click=${() => this.init()}>Init</gw-button>
+                    <gw-button @click=${() => this.activate()}>Activate</gw-button>
+                    <gw-button @click=${() => this.run()}>Run</gw-button>
+                    <gw-button @click=${() => this.stop()}>Stop</gw-button>
+<!--                    <gw-button danger @click=${() => this.remove()}>Löschen</gw-button>-->
+                </div>
+            </gw-row-footer>
+        `
+    }
+
+
+    async loadStatus() {
+        if (!this.workload) {
+            return
+        }
+        const response = await fetch(`/api/workspace/${this.workspaceId}/workload/${this.workload.id}/status`);
+        if (!response.ok) {
+            alert('Status fehlgeschlagen')
+            throw new Error(`HTTP ${response.status}`);
+        }
+        this.status = await response.json();
+    }
+    async remove() {
+        const response = await fetch(`/api/workspace/${this.workspaceId}/workload/${this.workload.id}`, {
+            method: "DELETE"
+        });
+        if (!response.ok) {
+            alert('Delete fehlgeschlagen')
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        this.dispatchEvent(new CustomEvent('gw-workspace-workload::delete-success', {
+            detail: this.workload,
+            bubbles: true,
+            composed: true,
+        }));
+    }
+
+    async run() {
+        const response = await fetch(`/api/workspace/${this.workspaceId}/workload/${this.workload.id}/run`, {
+            method: "POST"
+        });
+        if (!response.ok) {
+            alert('Run fehlgeschlagen')
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        this.dispatchEvent(new CustomEvent('gw-workspace-workload::run-success', {
+            detail: this.workload,
+            bubbles: true,
+            composed: true,
+        }));
+        this.loadStatus();
+    }
+    async stop() {
+        const response = await fetch(`/api/workspace/${this.workspaceId}/workload/${this.workload.id}/stop`, {
+            method: "POST"
+        });
+        if (!response.ok) {
+            alert('Stop fehlgeschlagen')
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        this.dispatchEvent(new CustomEvent('gw-workspace-workload::stop-success', {
+            detail: this.workload,
+            bubbles: true,
+            composed: true,
+        }));
+        this.loadStatus();
+    }
+
+    async activate() {
+        const response = await fetch(`/api/workspace/${this.workspaceId}/workload/${this.workload.id}/activate`, {
+            method: "POST"
+        });
+        if (!response.ok) {
+            alert('Activate fehlgeschlagen')
+            throw new Error(`HTTP ${response.status}`);
+        }
+        location.reload()
+    }
+
+    async init() {
+        const response = await fetch(`/api/workspace/${this.workspaceId}/workload/${this.workload.id}/init`, {
+            method: "POST"
+        });
+        if (!response.ok) {
+            alert('Entfernen fehlgeschlagen')
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        this.dispatchEvent(new CustomEvent('gw-workspace-workload::init-success', {
+            detail: this.workload,
+            bubbles: true,
+            composed: true,
+        }));
+    }
+
+})
 
 customElements.define('gw-workspace-init', class extends LitElement {
 
     static properties = {
-        wsid: {},
+        workspaceId: {},
         running: {}
     };
 
@@ -200,7 +244,7 @@ customElements.define('gw-workspace-init', class extends LitElement {
 
     async start() {
         this.running = true
-        const response = await fetch(`/api/workspace/${this.wsid}/init`, {
+        const response = await fetch(`/api/workspace/${this.workspaceId}/init`, {
             method: "POST"
         });
         if (!response.ok) {
@@ -217,10 +261,9 @@ customElements.define('gw-workspace-init', class extends LitElement {
 
 })
 
-
 customElements.define('gw-workspace', class extends LitElement {
     static properties = {
-        wsid: {},
+        workspaceId: {},
         workspace: {},
         state: {}
     };
@@ -237,7 +280,7 @@ customElements.define('gw-workspace', class extends LitElement {
     }
 
     willUpdate(changed) {
-        if (changed.has('wsid') && changed["wsid"]!== this.wsid) {
+        if (changed.has('workspaceId') && changed["workspaceId"]!== this.workspaceId) {
             this.reload();
         }
     }
@@ -257,22 +300,27 @@ customElements.define('gw-workspace', class extends LitElement {
 
         return html`
             <h2>${this.workspace.name}</h2>
-            <div>
-                <gw-workspace-status .wsid=${this.workspace.id}></gw-workspace-status>
-            </div>
+           
             <div>
                 Owner ${this.workspace.owner}, am: ${this.workspace.created}
             </div>
-            <gw-workspace-oc-control .wsid=${this.workspace.id}></gw-workspace-oc-control>
-            <gw-workspace-init .wsid=${this.workspace.id}></gw-workspace-init>
+            <gw-workspace-init .workspaceId=${this.workspace.id}></gw-workspace-init>
+            <div>
+                <h3>Workloads</h3>
+                ${this.workspace.workloads.length > 0
+                        ? this.workspace.workloads.map(workload => html`<gw-row>
+                            <gw-workspace-workload .workspaceId=${this.workspace.id} .workload=${workload}></gw-workspace-workload>
+                        </gw-row>`)
+                        : html`<a>Bisher sind keine Workloads definiert.</a>`}
+            </div>
             <div>
                 <h3>Projekte</h3>
-                <gw-add-project .wsid=${this.workspace.id}></gw-add-project>
+                <gw-add-project .workspaceId=${this.workspace.id}></gw-add-project>
                 ${this.workspace.projects.length > 0 
                     ? this.workspace.projects.map(project => html`<gw-row>
-                            <gw-workspace-project .wsid=${this.workspace.id} .project=${project}></gw-workspace-project>
+                            <gw-workspace-project .workspaceId=${this.workspace.id} .project=${project}></gw-workspace-project>
                         </gw-row>`)
-                    : html`<a>Bisher sind keine Projekte vorhanden</a>`}
+                    : html`<a>Bisher sind keine Projekte vorhanden.</a>`}
             </div>
         `;
     }
@@ -282,8 +330,8 @@ customElements.define('gw-workspace', class extends LitElement {
     }
 
     async reload() {
-        if (this.wsid) {
-            const response = await fetch(`/api/workspace/${this.wsid}`);
+        if (this.workspaceId) {
+            const response = await fetch(`/api/workspace/${this.workspaceId}`);
             if (response.status === 404) {
                 this.state = 'notFound';
                 return;

@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,7 +14,6 @@ import (
 	"path"
 	"strings"
 	"time"
-	"uuid"
 
 	"gtihub.com/mwildt/git-works/pkg/actions"
 	"gtihub.com/mwildt/git-works/pkg/auth"
@@ -52,7 +50,7 @@ func main() {
 
 	gitlabClient := gitlab.NewClient(config.GetEnv("GITLAB_BASE_URL", "https://gitlab.com"))
 	sessionManager := auth.NewSessionManager(gitlabClient)
-	workspaceManager, err := workspaces.NewManager()
+	//workspaceManager, err := workspaces.NewManager()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -63,6 +61,36 @@ func main() {
 
 	opencode := http.NewServeMux()
 
+	workspaceRepo, err := workspaces.NewRepository()
+	if err != nil {
+		log.Fatal(err)
+	}
+	workspaceService := workspaces.NewService(workspaceRepo, gitClient, opencodeActions)
+	workspaceController, err := workspaces.NewController(workspaceRepo, workspaceService, sessionManager)
+	api := http.NewServeMux()
+
+	workspaceController.SetUpApi(api)
+
+	authenticated := func(handler http.Handler) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+
+			cookie, err := r.Cookie("gw_session")
+			if err != nil {
+				slog.Default().Warn("cookie not found")
+				http.Error(w, "invalid cookie", http.StatusUnauthorized)
+				return
+			}
+			session, err := sessionManager.Validate(cookie.Value)
+			if err != nil {
+				slog.Default().Warn("session is invalid")
+				http.Error(w, "invalid cookie", http.StatusUnauthorized)
+				return
+			}
+			r = r.WithContext(auth.WithSession(r.Context(), session))
+			handler.ServeHTTP(w, r)
+		}
+	}
+
 	opencode.HandleFunc("PATCH /.git-works/session-mode", func(writer http.ResponseWriter, request *http.Request) {
 		cookie, err := request.Cookie("gw_session")
 		if err != nil {
@@ -70,7 +98,7 @@ func main() {
 			http.Error(writer, "invalid cookie", http.StatusUnauthorized)
 			return
 		}
-		if err := sessionManager.ActivateWorkspace(cookie.Value, uuid.Nil()); err != nil {
+		if err := sessionManager.ActivateWorkspace(cookie.Value, auth.WorkloadReference{}); err != nil {
 			slog.Default().Warn("cookie not found")
 			http.Error(writer, "invalid cookie", http.StatusBadRequest)
 			return
@@ -80,22 +108,21 @@ func main() {
 
 	opencode.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 
-		cookie, err := request.Cookie("gw_session")
-		if err != nil {
-			slog.Default().Warn("cookie not found")
-			http.Error(writer, "invalid cookie", http.StatusUnauthorized)
-			return
-		}
-		session, _ := sessionManager.Validate(cookie.Value)
+		session, ok := auth.ReadSession(request.Context())
 
-		workspace, ok := workspaceManager.ByIdAndOwner(session.ActiveWorkspace, session.Username)
 		if !ok {
-			slog.Default().Warn("workspace not found")
-			http.Error(writer, "workspace not found", http.StatusNotFound)
+			http.Error(writer, "not found", http.StatusForbidden)
 			return
 		}
-		request.Header.Set("Authorization", fmt.Sprintf("Basic %s", workspace.Opencode.BasicAuth()))
-		target, _ := url.Parse(workspace.TargetUrl())
+
+		_, workload, err := workspaceRepo.WorkloadById(request.Context(), session.ActiveWorkload.WorkspaceId, session.ActiveWorkload.WorkloadId)
+		if err != nil {
+			slog.Default().Warn("workspace not found")
+			http.Error(writer, "not found", http.StatusBadRequest)
+			return
+		}
+		request.Header.Set("Authorization", fmt.Sprintf("Basic %s", workload.Data.BasicAuth()))
+		target, _ := url.Parse(workload.TargetUrl())
 		proxy := httputil.NewSingleHostReverseProxy(target)
 
 		proxy.ModifyResponse = func(resp *http.Response) error {
@@ -127,421 +154,7 @@ func main() {
 		return
 	})
 
-	//opencode.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-	//	http.ServeFile(w, r, path.Join("./static/opencode", "index.html"))
-	//})
-
 	opencode.Handle("GET /.gw-mixin/", http.FileServer(http.Dir("./static/opencode/")))
-
-	handler.HandleFunc("PATCH /.git-works/session-mode", func(writer http.ResponseWriter, request *http.Request) {
-		wsid, err := uuid.Parse(request.URL.Query().Get("wsid"))
-		if err != nil {
-			http.Error(writer, "invalid wsid", http.StatusBadRequest)
-			return
-		}
-		cookie, err := request.Cookie("gw_session")
-		if err != nil {
-			slog.Default().Warn("cookie not found")
-			http.Error(writer, "invalid cookie", http.StatusUnauthorized)
-			return
-		}
-		if err := sessionManager.ActivateWorkspace(cookie.Value, wsid); err != nil {
-			slog.Default().Warn("cookie not found")
-			http.Error(writer, "invalid cookie", http.StatusBadRequest)
-			return
-		}
-		writer.WriteHeader(http.StatusAccepted)
-	})
-
-	srv := &http.Server{
-		Addr: appConfig.Host,
-		Handler: withTraceLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if cookie, err := r.Cookie("gw_session"); err == http.ErrNoCookie {
-				handler.ServeHTTP(w, r)
-			} else if session, err := sessionManager.Validate(cookie.Value); err != nil {
-				handler.ServeHTTP(w, r)
-			} else if session.ActiveWorkspace != uuid.Nil() {
-				// hier noch einen healthcheck ausführen ??
-				opencode.ServeHTTP(w, r)
-			} else {
-				handler.ServeHTTP(w, r)
-			}
-		})),
-		DisableGeneralOptionsHandler: false,
-		TLSConfig:                    nil,
-		ReadTimeout:                  30 * time.Second,
-		ReadHeaderTimeout:            10 * time.Second,
-		WriteTimeout:                 30 * time.Second,
-		IdleTimeout:                  120 * time.Second,
-	}
-
-	authenticated := func(handler http.Handler) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-
-			cookie, err := r.Cookie("gw_session")
-			if err != nil {
-				slog.Default().Warn("cookie not found")
-				http.Error(w, "invalid cookie", http.StatusUnauthorized)
-				return
-			}
-			session, err := sessionManager.Validate(cookie.Value)
-			if err != nil {
-				slog.Default().Warn("session is invalid")
-				http.Error(w, "invalid cookie", http.StatusUnauthorized)
-				return
-			}
-			r.WithContext(context.WithValue(r.Context(), "SESSION", session))
-			handler.ServeHTTP(w, r)
-		}
-	}
-
-	api := http.NewServeMux()
-
-	type WorkspaceResponse struct {
-		Id       uuid.UUID            `json:"id"`
-		Owner    string               `json:"owner"`
-		Name     string               `json:"name"`
-		Created  string               `json:"created"`
-		Projects []workspaces.Project `json:"projects"`
-	}
-
-	api.HandleFunc("POST /api/workspace", func(w http.ResponseWriter, r *http.Request) {
-		cookie, _ := r.Cookie("gw_session")
-		session, _ := sessionManager.Validate(cookie.Value)
-
-		workspace := workspaceManager.Create(session.Username)
-		response := WorkspaceResponse{
-			Id:      workspace.Id,
-			Name:    workspace.Name,
-			Owner:   workspace.Owner,
-			Created: workspace.Created.Format(time.RFC3339),
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	})
-
-	api.HandleFunc("GET /api/workspace", func(w http.ResponseWriter, r *http.Request) {
-		cookie, _ := r.Cookie("gw_session")
-		session, _ := sessionManager.Validate(cookie.Value)
-
-		response := []WorkspaceResponse{}
-		for _, w := range workspaceManager.AllByOwner(session.Username) {
-			response = append(response, WorkspaceResponse{
-				Id:      w.Id,
-				Name:    w.Name,
-				Owner:   w.Owner,
-				Created: w.Created.Format(time.RFC3339),
-			})
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	})
-
-	api.HandleFunc("GET /api/workspace/{wsId}", func(w http.ResponseWriter, r *http.Request) {
-		wsId, err := uuid.Parse(r.PathValue("wsId"))
-		if err != nil {
-			slog.Default().Warn("invalid ws id")
-			http.Error(w, "invalid ws id", http.StatusBadRequest)
-			return
-		}
-		cookie, _ := r.Cookie("gw_session")
-		session, _ := sessionManager.Validate(cookie.Value)
-
-		workspace, ok := workspaceManager.ByIdAndOwner(wsId, session.Username)
-		if !ok {
-			slog.Default().Warn("workspace not found")
-			http.Error(w, "workspace not found", http.StatusNotFound)
-			return
-		}
-		response := WorkspaceResponse{
-			Id:       workspace.Id,
-			Name:     workspace.Name,
-			Owner:    workspace.Owner,
-			Created:  workspace.Created.Format(time.RFC3339),
-			Projects: workspace.Projects,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	})
-
-	handler.HandleFunc("POST /api/workspace/{wsId}/activate", func(writer http.ResponseWriter, request *http.Request) {
-		wsid, err := uuid.Parse(request.PathValue("wsId"))
-		if err != nil {
-			http.Error(writer, "invalid wsid", http.StatusBadRequest)
-			return
-		}
-		cookie, err := request.Cookie("gw_session")
-		if err != nil {
-			slog.Default().Warn("cookie not found")
-			http.Error(writer, "invalid cookie", http.StatusUnauthorized)
-			return
-		}
-
-		session, _ := sessionManager.Validate(cookie.Value)
-		workspace, ok := workspaceManager.ByIdAndOwner(wsid, session.Username)
-		if !ok {
-			slog.Default().Warn("workspace not found")
-			http.Error(writer, "workspace not found", http.StatusNotFound)
-			return
-		}
-		status := workspace.Status(opencodeActions)
-		if status != "up" {
-			http.Error(writer, "workspace is down", http.StatusBadGateway)
-			return
-		}
-		if err := sessionManager.ActivateWorkspace(cookie.Value, wsid); err != nil {
-			slog.Default().Warn("unable to activate workspace", "wsid", wsid.String(), "err", err)
-			http.Error(writer, "invalid cookie", http.StatusInternalServerError)
-			return
-		}
-		writer.WriteHeader(http.StatusAccepted)
-	})
-
-	api.HandleFunc("POST /api/workspace/{wsId}/oc-up", func(w http.ResponseWriter, r *http.Request) {
-		wsId, err := uuid.Parse(r.PathValue("wsId"))
-		if err != nil {
-			slog.Default().Warn("invalid ws id")
-			http.Error(w, "invalid ws id", http.StatusBadRequest)
-			return
-		}
-		cookie, _ := r.Cookie("gw_session")
-		session, _ := sessionManager.Validate(cookie.Value)
-
-		workspace, ok := workspaceManager.ByIdAndOwner(wsId, session.Username)
-		if !ok {
-			slog.Default().Warn("workspace not found")
-			http.Error(w, "workspace not found", http.StatusNotFound)
-			return
-		}
-
-		err = workspace.Start(session.Token, opencodeActions)
-		if err != nil {
-			slog.Default().Error("unable to stop", "error", err)
-			http.Error(w, "unable to start", http.StatusBadGateway)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-
-	})
-
-	api.HandleFunc("POST /api/workspace/{wsId}/oc-down", func(w http.ResponseWriter, r *http.Request) {
-		wsId, err := uuid.Parse(r.PathValue("wsId"))
-		if err != nil {
-			slog.Default().Warn("invalid ws id")
-			http.Error(w, "invalid ws id", http.StatusBadRequest)
-			return
-		}
-		cookie, _ := r.Cookie("gw_session")
-		session, _ := sessionManager.Validate(cookie.Value)
-
-		workspace, ok := workspaceManager.ByIdAndOwner(wsId, session.Username)
-		if !ok {
-			slog.Default().Warn("workspace not found")
-			http.Error(w, "workspace not found", http.StatusNotFound)
-			return
-		}
-
-		err = workspace.Stop(session.Token, opencodeActions)
-		if err != nil {
-			slog.Default().Error("unable to stop", "error", err)
-			http.Error(w, "unable to start", http.StatusBadGateway)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-
-	})
-
-	api.HandleFunc("GET /api/workspace/{wsId}/status", func(w http.ResponseWriter, r *http.Request) {
-		wsId, err := uuid.Parse(r.PathValue("wsId"))
-		if err != nil {
-			slog.Default().Warn("invalid ws id")
-			http.Error(w, "invalid ws id", http.StatusBadRequest)
-			return
-		}
-		cookie, _ := r.Cookie("gw_session")
-		session, _ := sessionManager.Validate(cookie.Value)
-
-		workspace, ok := workspaceManager.ByIdAndOwner(wsId, session.Username)
-		if !ok {
-			slog.Default().Warn("workspace not found")
-			http.Error(w, "workspace not found", http.StatusNotFound)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-
-		response := struct {
-			WorkspaceId uuid.UUID `json:"workspaceId"`
-			Status      string    `json:"status"`
-		}{
-			WorkspaceId: workspace.Id,
-			Status:      workspace.Status(opencodeActions),
-		}
-
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	})
-
-	api.HandleFunc("DELETE /api/workspace/{wsId}", func(w http.ResponseWriter, r *http.Request) {
-		wsId, err := uuid.Parse(r.PathValue("wsId"))
-		if err != nil {
-			slog.Default().Warn("invalid ws id")
-			http.Error(w, "invalid ws id", http.StatusBadRequest)
-			return
-		}
-		cookie, _ := r.Cookie("gw_session")
-		session, _ := sessionManager.Validate(cookie.Value)
-
-		ok := workspaceManager.DeleteByIdAndOwner(wsId, session.Username)
-		if !ok {
-			slog.Default().Warn("workspace not found")
-			http.Error(w, "workspace not found", http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-	})
-
-	api.HandleFunc("POST /api/workspace/{wsId}/init", func(w http.ResponseWriter, r *http.Request) {
-		wsId, err := uuid.Parse(r.PathValue("wsId"))
-		if err != nil {
-			slog.Default().Warn("invalid ws id")
-			http.Error(w, "invalid ws id", http.StatusBadRequest)
-			return
-		}
-		cookie, _ := r.Cookie("gw_session")
-		session, _ := sessionManager.Validate(cookie.Value)
-
-		ws, ok := workspaceManager.ByIdAndOwner(wsId, session.Username)
-		if !ok {
-			slog.Default().Warn("workspace not found")
-			http.Error(w, "workspace not found", http.StatusNotFound)
-			return
-		}
-
-		go func() {
-			err := ws.Init(session.Token, gitClient)
-			if err != nil {
-				slog.Default().Warn("workspace init err", "error", err)
-			}
-		}()
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-	})
-
-	api.HandleFunc("POST /api/workspace/{wsId}/project", func(writer http.ResponseWriter, request *http.Request) {
-		var project struct {
-			Path    string `json:"path"`
-			Project struct {
-				GitUrl string `json:"http_url_to_repo"`
-			} `json:"project"`
-			Branch struct {
-				Name string `json:"name"`
-			} `json:"branch"`
-		}
-
-		err := json.NewDecoder(request.Body).Decode(&project)
-		if err != nil {
-			http.Error(writer, "invalid JSON", http.StatusBadRequest)
-			return
-		}
-		wsId, err := uuid.Parse(request.PathValue("wsId"))
-		if err != nil {
-			slog.Default().Warn("invalid ws id")
-			http.Error(writer, "invalid ws id", http.StatusBadRequest)
-			return
-		}
-
-		cookie, _ := request.Cookie("gw_session")
-		session, _ := sessionManager.Validate(cookie.Value)
-
-		workspace, ok := workspaceManager.ByIdAndOwner(wsId, session.Username)
-		if !ok {
-			slog.Default().Warn("workspace not found")
-			http.Error(writer, "workspace not found", http.StatusNotFound)
-			return
-		}
-
-		workspaceManager.AddProject(workspace, project.Path, project.Project.GitUrl, project.Branch.Name)
-		writer.WriteHeader(http.StatusCreated)
-	})
-
-	api.HandleFunc("DELETE /api/workspace/{wsId}/project/{projectId}", func(writer http.ResponseWriter, request *http.Request) {
-		wsId, err := uuid.Parse(request.PathValue("wsId"))
-		if err != nil {
-			slog.Default().Warn("invalid ws id")
-			http.Error(writer, "invalid ws id", http.StatusBadRequest)
-			return
-		}
-		projectId, err := uuid.Parse(request.PathValue("projectId"))
-		if err != nil {
-			slog.Default().Warn("invalid projectId")
-			http.Error(writer, "invalid projectId", http.StatusBadRequest)
-			return
-		}
-
-		cookie, _ := request.Cookie("gw_session")
-		session, _ := sessionManager.Validate(cookie.Value)
-
-		workspace, ok := workspaceManager.ByIdAndOwner(wsId, session.Username)
-		if !ok {
-			slog.Default().Warn("workspace not found")
-			http.Error(writer, "workspace not found", http.StatusNotFound)
-			return
-		}
-		workspaceManager.DeleteProjectById(workspace, projectId)
-	})
-
-	api.HandleFunc("GET /api/workspace/{wsId}/project/{projectId}/status", func(writer http.ResponseWriter, request *http.Request) {
-		wsId, err := uuid.Parse(request.PathValue("wsId"))
-		if err != nil {
-			slog.Default().Warn("invalid ws id")
-			http.Error(writer, "invalid ws id", http.StatusBadRequest)
-			return
-		}
-		projectId, err := uuid.Parse(request.PathValue("projectId"))
-		if err != nil {
-			slog.Default().Warn("invalid projectId")
-			http.Error(writer, "invalid projectId", http.StatusBadRequest)
-			return
-		}
-
-		cookie, _ := request.Cookie("gw_session")
-		session, _ := sessionManager.Validate(cookie.Value)
-
-		status, err := workspaceManager.GetProjectStatus(session.Username, wsId, projectId)
-		if err != nil {
-			slog.Default().Warn("cannot get project state")
-			http.Error(writer, "cannot get project state", http.StatusBadRequest)
-			return
-		}
-
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(writer).Encode(status); err != nil {
-			http.Error(writer, err.Error(), http.StatusInternalServerError)
-		}
-
-	})
 
 	api.HandleFunc("GET /api/gitlab/project", func(w http.ResponseWriter, r *http.Request) {
 		cookie, _ := r.Cookie("gw_session")
@@ -647,6 +260,28 @@ func main() {
 	handler.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, path.Join("./static/git-works", "index.html"))
 	})
+
+	srv := &http.Server{
+		Addr: appConfig.Host,
+		Handler: withTraceLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if cookie, err := r.Cookie("gw_session"); err == http.ErrNoCookie {
+				handler.ServeHTTP(w, r)
+			} else if session, err := sessionManager.Validate(cookie.Value); err != nil {
+				handler.ServeHTTP(w, r)
+			} else if session.ActiveWorkload != auth.NilWorkloadReference() {
+				// hier noch einen healthcheck ausführen ??
+				authenticated(opencode).ServeHTTP(w, r)
+			} else {
+				handler.ServeHTTP(w, r)
+			}
+		})),
+		DisableGeneralOptionsHandler: false,
+		TLSConfig:                    nil,
+		ReadTimeout:                  30 * time.Second,
+		ReadHeaderTimeout:            10 * time.Second,
+		WriteTimeout:                 30 * time.Second,
+		IdleTimeout:                  120 * time.Second,
+	}
 
 	slog.Default().Info("starting server", slog.String("host", appConfig.Host))
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

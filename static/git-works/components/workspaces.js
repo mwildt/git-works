@@ -80,8 +80,8 @@ customElements.define('gw-workspaces', class extends LitElement {
                 ${this.workspaces.map(workspace => html`
                    
                     <gw-row>
-                        <h3><a href="#/workspace?wsid=${workspace.id}" @click=${()=> {
-                                router.go('/user/workspace', {wsid: workspace.id});
+                        <h3><a href="#/workspace?workspaceId=${workspace.id}" @click=${()=> {
+                                router.go('/user/workspace', {workspaceId: workspace.id});
                         }}>${workspace.name}</a></h3>
                         <small>Erstellt von ${workspace.owner} | erstellt am ${workspace.created} | ${workspace.id} |  <gw-action @click="${() => this.delete(workspace)}">Entfernen</gw-action></small>
                     </gw-row>

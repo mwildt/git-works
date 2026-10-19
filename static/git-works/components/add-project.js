@@ -6,7 +6,7 @@ import './atomic/selectable.js';
 customElements.define('gw-add-project', class extends LitElement {
 
     static properties = {
-        wsid: {},
+        workspaceId: {},
         model: {},
         projects: {},
         branches: {}
@@ -157,7 +157,7 @@ customElements.define('gw-add-project', class extends LitElement {
     }
 
     async submit() {
-        const response = await fetch(`/api/workspace/${this.wsid}/project`, {
+        const response = await fetch(`/api/workspace/${this.workspaceId}/project`, {
             method: "POST",
             body: JSON.stringify(this.model),
         });

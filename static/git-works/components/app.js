@@ -85,7 +85,7 @@ customElements.define('gw-app-main', class extends LitElement {
                 }}>Arbeitsbereiche</a>, in denen du dann mit Opencode arbeiten kannst.</p>
             `;
             case '/workspace': return html`
-                <gw-workspace .wsid=${router.query.wsid}></gw-workspace>
+                <gw-workspace .workspaceId=${router.query.workspaceId}></gw-workspace>
             `;
             case '/user/workspace': return html`
                 <gw-workspaces></gw-workspaces>

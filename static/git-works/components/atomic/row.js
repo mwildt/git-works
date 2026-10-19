@@ -23,3 +23,24 @@ customElements.define('gw-row', class extends LitElement {
         `;
     }
 });
+
+customElements.define('gw-row-footer', class extends LitElement {
+
+    static styles = css`
+        :host {
+            display: flex;
+            justify-content: space-between;
+        }
+    `;
+
+    constructor() {
+        super();
+    }
+
+    render() {
+        return html`
+           <slot></slot>
+           <slot name="actions"></slot>
+        `;
+    }
+});

@@ -63,7 +63,7 @@ customElements.define('gw-login', class extends LitElement {
                 <h3>Anmeldung erforderlich</h3>
                 <p>Bitte gib deinen Access-Token ein, um fortzufahren.</p>
                 ${this.error ? html`<div class="error">${this.error}</div>` : undefined}
-                <gw-input type="password" name="token" .value=${this.token || ''} @input=${(e) => this.token = e.target.value} @keydown=${(e) => e.key === 'Enter' && this.submit(e)}>
+                <gw-input type="password" name="password" autocomplete="current-password" .value=${this.token || ''} @input=${(e) => this.token = e.target.value} @keydown=${(e) => e.key === 'Enter' && this.submit(e)}>
                     <span slot="label">Access Token</span>
                 </gw-input>
                 <div class="actions">

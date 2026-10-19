@@ -26,37 +26,29 @@ customElements.define('gw-button', class extends LitElement {
             transition: background-color 0.3s ease, transform 0.2s ease;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
-
+        
         button:hover:not(:disabled) {
-            background-color: #45a049;
-            transform: translateY(-1px);
+            background-color: #43A047; /* dunkleres Grün */
+        }
+    
+        :host([primary]) button {
+            background-color: #e8f5e8;
+            color: #2E7D32;
+        }
+    
+        :host([primary]) button:hover:not(:disabled) {
+            background-color: #c8e6c9; /* eine Stufe dunkler als e8f5e8 */
+        }
+    
+        :host([danger]) button {
+            background-color: #fdecea;
+            color: #C62828;
+        }
+    
+        :host([danger]) button:hover:not(:disabled) {
+            background-color: #f5c6c1; /* eine Stufe dunkler als fdecea */
         }
 
-        button:active:not(:disabled) {
-            transform: translateY(0);
-        }
-
-        button:disabled {
-            background-color: #cccccc;
-            cursor: not-allowed;
-        }
-
-        button.secondary {
-            background-color: #f0f0f0;
-            color: #333;
-        }
-
-        button.secondary:hover:not(:disabled) {
-            background-color: #e0e0e0;
-        }
-
-        button.danger {
-            background-color: #f44336;
-        }
-
-        button.danger:hover:not(:disabled) {
-            background-color: #d32f2f;
-        }
     `;
 
     constructor() {
@@ -68,9 +60,7 @@ customElements.define('gw-button', class extends LitElement {
     render() {
         return html`
             <button 
-                ?disabled=${this.disabled}
-                class=${this.type}
-            >
+                ?disabled=${this.disabled}>
                 <slot></slot>
             </button>
         `;

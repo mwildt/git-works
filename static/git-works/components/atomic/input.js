@@ -3,6 +3,7 @@ import { LitElement, html, css } from '../../lit.js';
 customElements.define('gw-input', class extends LitElement {
     static properties = {
         value: { type: String, reflect: true },
+        name: { type: String, reflect: true },
         type: { type: String, reflect: true },
         placeholder: { type: String, reflect: true },
         disabled: { type: Boolean, reflect: true },
@@ -75,6 +76,7 @@ customElements.define('gw-input', class extends LitElement {
             <label><slot name="label"></slot></label>
             <input 
                 .value=${this.value}
+                name=${this.name}
                 type=${this.type}
                 placeholder=${this.placeholder}
                 ?disabled=${this.disabled}
