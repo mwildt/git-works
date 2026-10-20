@@ -160,10 +160,6 @@ func (p Project) Init(token gitlab.Token, client *git.Git, workspace string) err
 	return client.Clone(token, p.GitUrl, path.Join(workspace, p.Path), p.Branch)
 }
 
-func (w *Workspace) addProject(path string, gitUrl string, branch string) {
-	w.Projects = append(w.Projects, Project{Path: path, GitUrl: gitUrl, Branch: branch, Id: uuid.New()})
-}
-
 func (w *Workspace) deleteProjectById(value uuid.UUID) bool {
 	for i, project := range w.Projects {
 		if project.Id == value {

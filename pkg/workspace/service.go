@@ -56,22 +56,16 @@ func (s *Service) Create(ctx context.Context) (*Workspace, error) {
 	if !ok {
 		return nil, Forbidden
 	}
-
 	workspace := NewWorkspace(owner)
-	if err := s.repo.Update(ctx, workspace); err != nil {
+	if err := s.repo.CreateWorkspace(ctx, workspace); err != nil {
 		return nil, err
 	}
-
 	if err := os.MkdirAll(workspace.workspaceDir(), os.ModePerm); err != nil {
 		slog.Default().Error("failed to create workspace directory", "error", err)
 	}
-
 	workload, err := s.CreateOpencodeWorkload(workspace, func() (int, error) {
 		return s.nextPort(), nil
 	})
-	workspace.Workloads = append(workspace.Workloads, workload)
-	s.repo.Update(ctx, workspace)
-
 	if err != nil {
 		slog.Default().Error("unable to create opencode Workload ", "error", err)
 		if err := os.RemoveAll(workspace.workspaceDir()); err != nil {
@@ -79,7 +73,15 @@ func (s *Service) Create(ctx context.Context) (*Workspace, error) {
 		}
 		return nil, err
 	}
-
+	workload.WorkspaceId = workspace.Id
+	if err := s.repo.AddWorkload(ctx, workspace.Id, workload); err != nil {
+		slog.Default().Error("unable to persist opencode workload", "error", err)
+		if err := os.RemoveAll(workspace.workspaceDir()); err != nil {
+			slog.Default().Warn("unable to rollback workspace", "error", err)
+		}
+		return nil, err
+	}
+	workspace.Workloads = append(workspace.Workloads, workload)
 	return &workspace, nil
 }
 
@@ -173,10 +175,7 @@ func (s *Service) DeleteProject(ctx context.Context, workspaceId uuid.UUID, proj
 		return err
 	}
 
-	if ok := workspace.deleteProjectById(projectId); !ok {
-		return err
-	}
-	if err := s.repo.Update(ctx, workspace); err != nil {
+	if err := s.repo.DeleteProject(ctx, workspaceId, projectId); err != nil {
 		return err
 	}
 	go func() {

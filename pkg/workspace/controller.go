@@ -140,8 +140,8 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			sendError(writer, err)
 			return
 		}
-		workspace.addProject(project.Path, project.Project.GitUrl, project.Branch.Name)
-		if err = ctrl.repo.Update(request.Context(), workspace); err != nil {
+		newProject := Project{Path: project.Path, GitUrl: project.Project.GitUrl, Branch: project.Branch.Name, Id: uuid.New()}
+		if err = ctrl.repo.AddProject(request.Context(), workspace.Id, newProject); err != nil {
 			sendError(writer, err)
 			return
 		}
