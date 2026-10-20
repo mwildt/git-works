@@ -10,6 +10,7 @@ import (
 	"uuid"
 
 	"gtihub.com/mwildt/git-works/pkg/auth"
+	"gtihub.com/mwildt/git-works/pkg/misc"
 )
 
 type Controller struct {
@@ -419,27 +420,23 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 }
 
 func sendErrorMessage(w http.ResponseWriter, status int, message string) {
-	http.Error(w, message, status)
+	misc.SendErrorMessage(w, status, message)
 }
 
 func sendError(w http.ResponseWriter, err error) {
 	if errors.Is(err, NotFound) {
-		http.Error(w, "not found", http.StatusNotFound)
+		misc.SendErrorMessage(w, http.StatusNotFound, "not found")
+		return
 	}
-
 	if errors.Is(err, Forbidden) {
-		http.Error(w, "das ist nicht erlaubt", http.StatusForbidden)
+		misc.SendErrorMessage(w, http.StatusForbidden, "das ist nicht erlaubt")
+		return
 	}
-
-	http.Error(w, "ein fehler ist aufgetrten", http.StatusInternalServerError)
+	misc.SendErrorMessage(w, http.StatusInternalServerError, "ein fehler ist aufgetrten")
 }
 
 func sendJson(w http.ResponseWriter, statusCode int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	misc.SendJson(w, statusCode, payload)
 }
 
 type WorkloadResponse struct {
