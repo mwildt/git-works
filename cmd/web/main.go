@@ -114,11 +114,14 @@ func main() {
 			return
 		}
 
+		var buf bytes.Buffer
+		if err := json.NewEncoder(&buf).Encode(location); err != nil {
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusAccepted)
-		if err := json.NewEncoder(writer).Encode(location); err != nil {
-			http.Error(writer, err.Error(), http.StatusInternalServerError)
-		}
+		writer.Write(buf.Bytes())
 
 	})
 
@@ -138,7 +141,12 @@ func main() {
 			return
 		}
 		request.Header.Set("Authorization", fmt.Sprintf("Basic %s", workload.Data.BasicAuth()))
-		target, _ := url.Parse(workload.TargetUrl())
+		target, err := url.Parse(workload.TargetUrl())
+		if err != nil {
+			slog.Default().Warn("invalid workload target url", "error", err)
+			http.Error(writer, "invalid workload target url", http.StatusBadGateway)
+			return
+		}
 		proxy := httputil.NewSingleHostReverseProxy(target)
 		proxy.FlushInterval = -1
 
