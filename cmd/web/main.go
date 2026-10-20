@@ -195,11 +195,14 @@ func main() {
 			return
 		}
 
+		var projectsBuf bytes.Buffer
+		if err := json.NewEncoder(&projectsBuf).Encode(projects); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(projects); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
+		w.Write(projectsBuf.Bytes())
 	})
 
 	api.HandleFunc("GET /api/gitlab/project/{projectid}/branches", func(w http.ResponseWriter, r *http.Request) {
@@ -215,11 +218,14 @@ func main() {
 			return
 		}
 
+		var branchesBuf bytes.Buffer
+		if err := json.NewEncoder(&branchesBuf).Encode(branches); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(branches); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
+		w.Write(branchesBuf.Bytes())
 	})
 
 	api.HandleFunc("GET /api/user", func(w http.ResponseWriter, r *http.Request) {
@@ -238,12 +244,15 @@ func main() {
 		}{
 			Username: session.Username,
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(body); err != nil {
+		var userBuf bytes.Buffer
+		if err := json.NewEncoder(&userBuf).Encode(body); err != nil {
 			slog.Default().Error("json encode failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(userBuf.Bytes())
 	})
 
 	handler.Handle("/api/", authenticated(api))
