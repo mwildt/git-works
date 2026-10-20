@@ -20,6 +20,7 @@ import (
 	"gtihub.com/mwildt/git-works/pkg/config"
 	"gtihub.com/mwildt/git-works/pkg/git"
 	"gtihub.com/mwildt/git-works/pkg/gitlab"
+	"gtihub.com/mwildt/git-works/pkg/misc"
 	workspaces "gtihub.com/mwildt/git-works/pkg/workspace"
 )
 
@@ -114,14 +115,7 @@ func main() {
 			return
 		}
 
-		var buf bytes.Buffer
-		if err := json.NewEncoder(&buf).Encode(location); err != nil {
-			http.Error(writer, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusAccepted)
-		writer.Write(buf.Bytes())
+		misc.SendJson(writer, http.StatusAccepted, location)
 
 	})
 
@@ -195,14 +189,7 @@ func main() {
 			return
 		}
 
-		var projectsBuf bytes.Buffer
-		if err := json.NewEncoder(&projectsBuf).Encode(projects); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write(projectsBuf.Bytes())
+		misc.SendJson(w, http.StatusOK, projects)
 	})
 
 	api.HandleFunc("GET /api/gitlab/project/{projectid}/branches", func(w http.ResponseWriter, r *http.Request) {
@@ -218,14 +205,7 @@ func main() {
 			return
 		}
 
-		var branchesBuf bytes.Buffer
-		if err := json.NewEncoder(&branchesBuf).Encode(branches); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write(branchesBuf.Bytes())
+		misc.SendJson(w, http.StatusOK, branches)
 	})
 
 	api.HandleFunc("GET /api/user", func(w http.ResponseWriter, r *http.Request) {
@@ -244,15 +224,7 @@ func main() {
 		}{
 			Username: session.Username,
 		}
-		var userBuf bytes.Buffer
-		if err := json.NewEncoder(&userBuf).Encode(body); err != nil {
-			slog.Default().Error("json encode failed", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write(userBuf.Bytes())
+		misc.SendJson(w, http.StatusOK, body)
 	})
 
 	handler.Handle("/api/", authenticated(api))
