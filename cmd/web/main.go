@@ -144,12 +144,21 @@ func main() {
 		proxy := httputil.NewSingleHostReverseProxy(target)
 		proxy.FlushInterval = -1
 
+		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			slog.Default().Error("proxy error", "method", r.Method, "path", r.URL.Path, "error", err)
+			http.Error(w, "workload unreachable", http.StatusBadGateway)
+		}
+
 		proxy.ModifyResponse = func(resp *http.Response) error {
 			contentType := resp.Header.Get("Content-Type")
 			if !strings.Contains(contentType, "text/html") {
 				return nil
 			}
-			body, _ := io.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				resp.Body.Close()
+				return fmt.Errorf("read upstream body: %w", err)
+			}
 			resp.Body.Close()
 
 			const injectTag = "<script type=\"module\" crossorigin src=\"/.gw-mixin/index.js\" defer></script>"
@@ -288,7 +297,6 @@ func main() {
 		TLSConfig:                    nil,
 		ReadTimeout:                  30 * time.Second,
 		ReadHeaderTimeout:            10 * time.Second,
-		WriteTimeout:                 30 * time.Second,
 		IdleTimeout:                  120 * time.Second,
 	}
 
