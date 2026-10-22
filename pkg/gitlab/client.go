@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strconv"
 )
 
 type (
@@ -47,6 +49,11 @@ type (
 			CreatedAt  string `json:"created_at"`
 		}
 	}
+
+	ProjectSearchResult struct {
+		Projects []Project
+		NextPage int
+	}
 )
 
 func NewClient(baseUrl string) *Client {
@@ -80,9 +87,19 @@ func (c *Client) GetUser(token Token) (user *UserResponse, err error) {
 	return
 }
 
-func (c *Client) ListProjects(token Token) (projects []Project, err error) {
+func (c *Client) SearchProjects(token Token, search string, page int) (*ProjectSearchResult, error) {
+	if page < 1 {
+		page = 1
+	}
+	query := url.Values{}
+	query.Set("search", search)
+	query.Set("search_namespaces", "true")
+	query.Set("membership", "true")
+	query.Set("simple", "true")
+	query.Set("page", strconv.Itoa(page))
+	query.Set("per_page", "20")
 
-	req, err := http.NewRequest("GET", c.baseUrl+"/api/v4/projects?membership=true", nil)
+	req, err := http.NewRequest("GET", c.baseUrl+"/api/v4/projects?"+query.Encode(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -97,10 +114,16 @@ func (c *Client) ListProjects(token Token) (projects []Project, err error) {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("gitlab: %s: %s", resp.Status, body)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&projects); err != nil {
+	result := &ProjectSearchResult{}
+	if err := json.NewDecoder(resp.Body).Decode(&result.Projects); err != nil {
 		return nil, err
 	}
-	return projects, nil
+	if next := resp.Header.Get("X-Next-Page"); next != "" {
+		if nextPage, err := strconv.Atoi(next); err == nil {
+			result.NextPage = nextPage
+		}
+	}
+	return result, nil
 }
 
 func (c *Client) ListBranches(token Token, projectid string) (branches []Branch, err error) {

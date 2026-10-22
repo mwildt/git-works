@@ -9,7 +9,11 @@ customElements.define('gw-add-project', class extends LitElement {
         workspaceId: {},
         model: {},
         projects: {},
-        branches: {}
+        branches: {},
+        searchTerm: {},
+        nextPage: { type: Number },
+        searchTimer: {},
+        loading: { type: Boolean },
     };
 
     static styles = css`
@@ -48,6 +52,13 @@ customElements.define('gw-add-project', class extends LitElement {
             color: #333;
         }
 
+        .no-results {
+            padding: 16px;
+            color: #999;
+            font-size: 14px;
+            text-align: center;
+        }
+
         .selectable-list {
             max-height: 200px;
             overflow-y: auto;
@@ -77,6 +88,10 @@ customElements.define('gw-add-project', class extends LitElement {
 
     constructor() {
         super();
+        this.searchTerm = '';
+        this.nextPage = 0;
+        this.searchTimer = undefined;
+        this.loading = false;
     }
 
     async connectedCallback() {
@@ -94,17 +109,35 @@ customElements.define('gw-add-project', class extends LitElement {
                 
                 <div class="section">
                     <h4>Gitlab Repository auswählen</h4>
-                    <div class="selectable-list">
-                        ${this.projects && this.projects.map(project => html`
-                            <gw-selectable 
-                                ?selected=${project.id === this.model.project?.id}
-                                @click=${() => this.selectProject(project)}
-                            >
-                                <span slot="primary">${project.name}</span>
-                                <span slot="secondary">${project.web_url}</span>
-                            </gw-selectable>
-                        `)}
-                    </div>
+                    <span class="description">Mindestens 3 Zeichen eingeben, um in Gitlab zu suchen</span>
+                    <gw-input 
+                        .value=${this.searchTerm}
+                        placeholder="z.B. my-project"
+                        @input=${(e) => this.onSearchInput(e)}
+                    >
+                        <span slot="label">Suche</span>
+                    </gw-input>
+                    ${this.projects === undefined
+                        ? undefined
+                        : html`
+                            <div class="selectable-list">
+                                ${this.projects.map(project => html`
+                                    <gw-selectable 
+                                        ?selected=${project.id === this.model.project?.id}
+                                        @click=${() => this.selectProject(project)}
+                                    >
+                                        <span slot="primary">${project.name}</span>
+                                        <span slot="secondary">${project.web_url}</span>
+                                    </gw-selectable>
+                                `)}
+                                ${this.projects.length === 0
+                                    ? html`<div class="no-results">Keine Projekte gefunden</div>`
+                                    : undefined}
+                            </div>
+                            ${this.nextPage > 0
+                                ? html`<gw-button type="secondary" ?disabled=${this.loading} @click=${() => this.loadMore()}>Mehr laden</gw-button>`
+                                : undefined}
+                        `}
                 </div>
 
                 ${this.model.project !== undefined
@@ -143,6 +176,64 @@ customElements.define('gw-add-project', class extends LitElement {
         this.model = { ...this.model, branch };
     }
 
+    onSearchInput(e) {
+        const value = e.detail?.value ?? e.target.value;
+        this.searchTerm = value;
+        if (this.searchTimer !== undefined) {
+            clearTimeout(this.searchTimer);
+        }
+        if (value.trim().length < 3) {
+            this.projects = undefined;
+            this.nextPage = 0;
+            return;
+        }
+        this.searchTimer = setTimeout(() => this.searchProjects(), 300);
+    }
+
+    async searchProjects() {
+        if (this.searchTerm.trim().length < 3) {
+            return;
+        }
+        this.loading = true;
+        this.projects = undefined;
+        this.nextPage = 0;
+        if (this.model.project !== undefined) {
+            this.model = { ...this.model, project: undefined };
+            this.branches = undefined;
+        }
+        const result = await this.fetchProjects(1);
+        this.loading = false;
+        if (result) {
+            this.projects = result.projects ?? [];
+            this.nextPage = result.next_page ?? 0;
+        }
+    }
+
+    async loadMore() {
+        if (this.nextPage < 1) {
+            return;
+        }
+        this.loading = true;
+        const page = this.nextPage;
+        const result = await this.fetchProjects(page);
+        this.loading = false;
+        if (result) {
+            const existing = this.projects ?? [];
+            const existingIds = new Set(existing.map(p => p.id));
+            this.projects = [...existing, ...(result.projects ?? []).filter(p => !existingIds.has(p.id))];
+            this.nextPage = result.next_page ?? 0;
+        }
+    }
+
+    async fetchProjects(page) {
+        const search = encodeURIComponent(this.searchTerm.trim());
+        const response = await fetch(`/api/gitlab/project?search=${search}&page=${page}`);
+        if (!response.ok) {
+            return undefined;
+        }
+        return await response.json();
+    }
+
     async selectProject(project) {
         this.model = { ...this.model, project, path: project.path_with_namespace };
         this.branches = undefined;
@@ -152,8 +243,8 @@ customElements.define('gw-add-project', class extends LitElement {
 
     async start() {
         this.model = {};
-        const response = await fetch('/api/gitlab/project');
-        this.projects = await response.json();
+        this.projects = undefined;
+        this.nextPage = 0;
     }
 
     async submit() {
