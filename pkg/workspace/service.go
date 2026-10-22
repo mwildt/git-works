@@ -96,7 +96,8 @@ func (m *Service) nextPort() int {
 
 func (s *Service) ProjectStatus(_ context.Context, workspace Workspace, project Project) (ProjectStatus, error) {
 	projectDir := path.Join(workspace.workspaceDir(), project.Path)
-	commits, err := s.gitClient.CommitsAhead(projectDir, project.Branch)
+	// den branch zu bestimmenen ist eigentlich deutlich komplizietrer....
+	commits, err := s.gitClient.CommitsAhead(projectDir, "origin/"+project.Branch)
 	if err != nil {
 		slog.Default().Warn("unable to determine commits ahead", "error", err)
 		commits = []git.Commit{}
