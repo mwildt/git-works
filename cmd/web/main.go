@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -188,17 +189,25 @@ func main() {
 	opencode.Handle("GET /.gw-mixin/", http.FileServer(http.Dir("./static/opencode/")))
 
 	api.HandleFunc("GET /api/gitlab/project", func(w http.ResponseWriter, r *http.Request) {
+		search := r.URL.Query().Get("search")
+		page := 1
+		if raw := r.URL.Query().Get("page"); raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil {
+				page = parsed
+			}
+		}
+
 		cookie, _ := r.Cookie("gw_session")
 		session, _ := sessionManager.Validate(cookie.Value)
 
-		projects, err := gitlabClient.ListProjects(session.Token)
+		result, err := gitlabClient.SearchProjects(session.Token, search, page)
 		if err != nil {
 			slog.Default().Warn("gitlab projects not found")
 			http.Error(w, "gitlab projects not found", http.StatusBadGateway)
 			return
 		}
 
-		misc.SendJson(w, http.StatusOK, projects)
+		misc.SendJson(w, http.StatusOK, result)
 	})
 
 	api.HandleFunc("GET /api/gitlab/project/{projectid}/branches", func(w http.ResponseWriter, r *http.Request) {
