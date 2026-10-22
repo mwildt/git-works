@@ -16,9 +16,10 @@ import (
 )
 
 type ProjectStatus struct {
-	ProjectId   uuid.UUID `json:"project_id"`
-	Initialized bool      `json:"initialized"`
-	HasChanges  bool      `json:"has_changes"`
+	ProjectId   uuid.UUID    `json:"project_id"`
+	Initialized bool         `json:"initialized"`
+	HasChanges  bool         `json:"has_changes"`
+	Commits     []git.Commit `json:"commits"`
 }
 
 type Service struct {
@@ -94,10 +95,17 @@ func (m *Service) nextPort() int {
 }
 
 func (s *Service) ProjectStatus(_ context.Context, workspace Workspace, project Project) (ProjectStatus, error) {
+	projectDir := path.Join(workspace.workspaceDir(), project.Path)
+	commits, err := s.gitClient.CommitsAhead(projectDir, project.Branch)
+	if err != nil {
+		slog.Default().Warn("unable to determine commits ahead", "error", err)
+		commits = []git.Commit{}
+	}
 	return ProjectStatus{
 		ProjectId:   project.Id,
-		Initialized: isGitRepo(path.Join(workspace.workspaceDir(), project.Path)),
-		HasChanges:  hasGitChanges(path.Join(workspace.workspaceDir(), project.Path)),
+		Initialized: isGitRepo(projectDir),
+		HasChanges:  hasGitChanges(projectDir),
+		Commits:     commits,
 	}, nil
 
 }
