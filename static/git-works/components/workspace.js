@@ -10,14 +10,46 @@ customElements.define('gw-workspace-project', class extends LitElement {
         project: {},
         commit: {},
         workspaceId: {},
-        committing: {}
+        committing: {},
+        showCommits: { type: Boolean }
     };
+
+    static styles = css`
+        .commits {
+            margin: 8px 0;
+            padding: 12px;
+            background-color: #f9f9f9;
+            border-radius: 8px;
+        }
+        .commits-title {
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        .commit-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .commit-item {
+            font-size: 13px;
+            display: flex;
+            gap: 8px;
+        }
+        .commit-short {
+            font-family: monospace;
+            color: #555;
+        }
+    `;
 
     constructor() {
         super();
         this.commit = undefined;
         this.status = {};
         this.committing = false;
+        this.showCommits = false;
     }
 
     async connectedCallback() {
@@ -49,6 +81,7 @@ customElements.define('gw-workspace-project', class extends LitElement {
 
                 <div slot="actions">
                     <gw-button @click=${() => this.init()}>Init</gw-button>
+                    <gw-button @click=${() => this.toggleCommits()}>Commits</gw-button>
                     ${this.status.has_changes
                             ? html`<gw-button danger @click=${() => this.commit = {}}>Commit</gw-button>`
                             : undefined}
@@ -62,7 +95,36 @@ customElements.define('gw-workspace-project', class extends LitElement {
                            @gw-commit-form::cancel=${() => this.commit = undefined}
                     ></gw-commit-form>`
                     : undefined}
+
+            ${this.showCommits
+                    ? this.renderCommits()
+                    : undefined}
         `
+    }
+
+    renderCommits() {
+        const commits = this.status.commits || [];
+        return html`
+            <div class="commits">
+                <div class="commits-title">Commits auf HEAD, nicht im Branch ${this.project.branch}</div>
+                ${commits.length > 0
+                        ? html`<ul class="commit-list">
+                            ${commits.map(commit => html`<li class="commit-item">
+                                <span class="commit-short">${commit.short}</span>
+                                <span>${commit.author}</span>
+                                <span>${commit.message}</span>
+                            </li>`)}
+                        </ul>`
+                        : html`<span>Keine Commits vorhanden.</span>`}
+            </div>
+        `;
+    }
+
+    toggleCommits() {
+        if (!this.showCommits) {
+            this.loadStatus();
+        }
+        this.showCommits = !this.showCommits;
     }
 
 

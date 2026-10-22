@@ -20,6 +20,13 @@ type Git struct {
 	cloneTimeout time.Duration
 }
 
+type Commit struct {
+	Hash    string `json:"hash"`
+	Short   string `json:"short"`
+	Author  string `json:"author"`
+	Message string `json:"message"`
+}
+
 func NewGit() *Git {
 	return &Git{
 		maxRetries:   3,
@@ -115,6 +122,38 @@ func (g *Git) CommitAndPush(token gitlab.Token, dir string, message string, bran
 		return fmt.Errorf("git push failed: %s (%s)", err.Error(), strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func (g *Git) CommitsAhead(dir string, branch string) ([]Commit, error) {
+	if !isGitRepo(dir) {
+		return []Commit{}, nil
+	}
+	if branch == "" {
+		branch = "HEAD"
+	}
+	rangeRef := fmt.Sprintf("%s..HEAD", branch)
+	cmd := exec.Command("git", "-C", dir, "log", "--pretty=format:%H%x1f%h%x1f%an%x1f%s", rangeRef)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git log %s failed: %s", rangeRef, err.Error())
+	}
+	commits := []Commit{}
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "\x1f")
+		if len(parts) != 4 {
+			continue
+		}
+		commits = append(commits, Commit{
+			Hash:    parts[0],
+			Short:   parts[1],
+			Author:  parts[2],
+			Message: parts[3],
+		})
+	}
+	return commits, nil
 }
 
 func currentBranch(dir string) (string, error) {
