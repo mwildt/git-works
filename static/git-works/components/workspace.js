@@ -234,9 +234,18 @@ customElements.define('gw-workspace-workload', class extends LitElement {
                 <div slot="actions">
                     <gw-button @click=${() => this.loadStatus()}>Status</gw-button>
                     <gw-button @click=${() => this.init()}>Init</gw-button>
-                    <gw-button @click=${() => this.activate()}>Activate</gw-button>
-                    <gw-button @click=${() => this.run()}>Run</gw-button>
-                    <gw-button @click=${() => this.stop()}>Stop</gw-button>
+                    ${this.status && this.status.status == "up" 
+                            ? html`
+                                <gw-button primary @click=${() => this.activate()}>Activate</gw-button>
+                                <gw-button danger @click=${() => this.stop()}>Stop</gw-button>
+                            `
+                            : undefined}
+                    ${this.status && this.status.status == "down"
+                            ? html`<gw-button @click=${() => this.run()}>Start</gw-button>`
+                            : undefined}
+                 
+                    
+                    
 <!--                    <gw-button danger @click=${() => this.remove()}>Löschen</gw-button>-->
                 </div>
             </gw-row-footer>
