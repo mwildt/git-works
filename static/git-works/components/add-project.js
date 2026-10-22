@@ -104,7 +104,7 @@ customElements.define('gw-add-project', class extends LitElement {
         }
 
         return html`
-            <gw-dialog>
+            <gw-modal>
                 <h3>Neus Projekt hinzufügen</h3>
                 
                 <div class="section">
@@ -160,18 +160,26 @@ customElements.define('gw-add-project', class extends LitElement {
                             <gw-input .value=${this.model.path || ''} @input=${(e) => this.model = { ...this.model, path: e.target.value }} >
                                 <span slot="label">Pfad</span>
                             </gw-input>
-                        </div>
-
-                        <div class="actions">
-                            <gw-button @click=${() => this.submit()}>Hinzufügen</gw-button>
-                            <gw-button type="secondary" @click=${() => this.model = undefined}>Abbrechen</gw-button>
-                        </div>
-                    `
-                    : undefined}
-            </gw-dialog>
+                        </div>`
+                        : undefined}
+                <div class="actions">
+                    <gw-button type="secondary" @click=${() => this.model = undefined}>Abbrechen</gw-button>
+                    ${this.valid() ? html`<gw-button primary @click=${() => this.submit()}>Hinzufügen</gw-button>` : undefined}
+                </div>
+            </gw-modal>
         `;
     }
 
+    valid() {
+        return this.model
+        && !this.empty(this.model.path)
+        && this.model.branch != undefined
+        && this.model.project != undefined
+    }
+
+    empty(v) {
+        return v === undefined || v.length == 0
+    }
     async selectBranch(branch) {
         this.model = { ...this.model, branch };
     }
@@ -243,6 +251,7 @@ customElements.define('gw-add-project', class extends LitElement {
 
     async start() {
         this.model = {};
+        this.searchTerm = '';
         this.projects = undefined;
         this.nextPage = 0;
     }

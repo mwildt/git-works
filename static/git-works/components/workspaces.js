@@ -17,9 +17,7 @@ customElements.define('gw-create-workspace', class extends LitElement {
         return html`
             <gw-dialog>
                 <h4>Neuen Workspace anlegen</h4>
-                
                 <p>... Der name wird erstmal zufällig erzeugt.</p>
-                
                 <div class="actions">
                     <gw-button @click=${() => this.submit()}>Hinzufügen</gw-button>
                     <gw-button type="secondary" @click=${() => this.model = undefined}>Abbrechen</gw-button>
@@ -55,10 +53,6 @@ customElements.define('gw-workspaces', class extends LitElement {
         workspaces: {}
     };
 
-    static styles = css`
-
-    `;
-
     constructor() {
         super();
         this.workspaces = []
@@ -78,7 +72,6 @@ customElements.define('gw-workspaces', class extends LitElement {
             <gw-create-workspace></gw-create-workspace>
             <div>
                 ${this.workspaces.map(workspace => html`
-                   
                     <gw-row>
                         <h3><a href="#/workspace?workspaceId=${workspace.id}" @click=${()=> {
                                 router.go('/user/workspace', {workspaceId: workspace.id});
@@ -89,7 +82,6 @@ customElements.define('gw-workspaces', class extends LitElement {
             </div>
         `;
     }
-
 
     async reload() {
         const response = await fetch('/api/workspace');
