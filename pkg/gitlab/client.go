@@ -51,8 +51,8 @@ type (
 	}
 
 	ProjectSearchResult struct {
-		Projects []Project
-		NextPage int
+		Projects []Project `json:"projects"`
+		NextPage int       `json:"next_page"`
 	}
 )
 

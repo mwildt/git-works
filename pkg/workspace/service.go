@@ -3,9 +3,11 @@ package workspace
 import (
 	"context"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path"
+	"strconv"
 	"strings"
 	"uuid"
 
@@ -32,8 +34,10 @@ func NewService(repo *Repository, gitClient *git.Git, actions *actions.Client) *
 	return &Service{repo: repo, gitClient: gitClient, actions: actions}
 }
 
-func (s *Service) CreateOpencodeWorkload(ws Workspace, portProvider func() (int, error)) (workoad Workload, err error) {
-	port, err := portProvider()
+func (s *Service) CreateOpencodeWorkload(ws Workspace, portProvider func(string) (int, error)) (workoad Workload, err error) {
+
+	host := config.GetEnv("OPENCODE_REMOTE_HOST", "127.0.0.1")
+	port, err := portProvider(host)
 	if err != nil {
 		return
 	}
@@ -46,7 +50,7 @@ func (s *Service) CreateOpencodeWorkload(ws Workspace, portProvider func() (int,
 			Key:          "workspaces_opencode_" + ws.Id.String()[0:10],
 			AuthUsername: "git-works",
 			AuthPassword: "password",
-			Host:         config.GetEnv("OPENCODE_REMOTE_HOST", "127.0.0.1"),
+			Host:         host,
 			Port:         port,
 		},
 	}, nil
@@ -66,9 +70,8 @@ func (s *Service) Create(ctx context.Context) (*Workspace, error) {
 	if err := os.MkdirAll(workspace.workspaceDir(), os.ModePerm); err != nil {
 		slog.Default().Error("failed to create workspace directory", "error", err)
 	}
-
-	workload, err := s.CreateOpencodeWorkload(workspace, func() (int, error) {
-		return s.nextPort(), nil
+	workload, err := s.CreateOpencodeWorkload(workspace, func(string) (int, error) {
+		return s.nextPort(config.GetEnv("OPENCODE_REMOTE_HOST", "127.0.0.1")), nil
 	})
 	workspace.Workloads = append(workspace.Workloads, workload)
 	s.repo.Update(ctx, workspace)
@@ -84,12 +87,18 @@ func (s *Service) Create(ctx context.Context) (*Workspace, error) {
 	return &workspace, nil
 }
 
-func (m *Service) nextPort() int {
+func (m *Service) nextPort(host string) int {
 	port := config.GetEnvInt("WORKSPACE_START_PORT", 9000)
 	for _, ws := range m.repo.all() {
+		if ws.Opencode.Host != host {
+			continue
+		}
 		if ws.Opencode.Port >= port {
 			port = ws.Opencode.Port + 1
 		}
+	}
+	for isPortBusy(host, strconv.Itoa(port)) {
+		port++
 	}
 	return port
 }
@@ -228,4 +237,14 @@ func hasGitChanges(dir string) bool {
 		return false
 	}
 	return len(strings.TrimSpace(string(output))) > 0
+}
+
+func isPortBusy(host, port string) bool {
+	slog.Default().Info("checking port busy", "host", host, "port", port)
+	listener, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		return true // Port belegt oder nicht verfügbar
+	}
+	listener.Close()
+	return false
 }
