@@ -54,7 +54,7 @@ Der Opencode-Container wird über `opencode.containerfile` gebaut.
 | `WORKSPACE_START_PORT` | `9000` | Startport für die Portvergabe der Workloads |
 | `OPENCODE_TEMPLATE_FILE` | `opencode.json` | Template-Datei für die Opencode-Konfiguration pro Workload |
 | `OPENCODE_TARGET_URL` | `http://{{.host}}:{{.port}}/` | URL-Template, unter dem ein Workload erreichbar ist |
-| `WORSPACE_LOG` | – | Wenn gesetzt, wird das Workspace-Log in diese Datei geschrieben |
+| `WORKSPACE_LOG` | – | Wenn gesetzt, wird das Workspace-Log in diese Datei geschrieben |
 
 ## HTTP-Endpunkte
 
