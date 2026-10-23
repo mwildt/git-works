@@ -26,7 +26,10 @@ import (
 )
 
 type configuration struct {
-	Host string
+	Host    string
+	TLSCert string
+	TLSKey  string
+	UseTLS  bool
 }
 
 func main() {
@@ -34,6 +37,9 @@ func main() {
 	appConfig := &configuration{
 		Host: config.GetEnv("SERVER_ADDRESS", "0.0.0.0:8080"),
 	}
+	appConfig.TLSCert = os.Getenv("TLS_CERT_FILE")
+	appConfig.TLSKey = os.Getenv("TLS_KEY_FILE")
+	appConfig.UseTLS = appConfig.TLSCert != "" && appConfig.TLSKey != ""
 
 	opencodeActions, err := actions.NewHttpActions(config.GetEnv("GITLAB_ACTIONS_FILE", "gitlab-http-actions.yml"))
 
@@ -309,9 +315,15 @@ func main() {
 		IdleTimeout:                  120 * time.Second,
 	}
 
-	slog.Default().Info("starting server", slog.String("host", appConfig.Host))
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		slog.Default().Error("server error", "error", err)
+	slog.Default().Info("starting server", slog.String("host", appConfig.Host), slog.Bool("tls", appConfig.UseTLS))
+	var serveErr error
+	if appConfig.UseTLS {
+		serveErr = srv.ListenAndServeTLS(appConfig.TLSCert, appConfig.TLSKey)
+	} else {
+		serveErr = srv.ListenAndServe()
+	}
+	if serveErr != nil && serveErr != http.ErrServerClosed {
+		slog.Default().Error("server error", "error", serveErr)
 		os.Exit(1)
 	}
 }
