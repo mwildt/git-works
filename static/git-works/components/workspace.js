@@ -92,6 +92,7 @@ customElements.define('gw-workspace-project', class extends LitElement {
             ${this.commit
                     ? html`<gw-commit-form .project=${this.project} .committing=${this.committing} .commitBranch=${this.project.branch}
                            @gw-commit-form::commit=${(e) => this.handleCommit(e.detail)}
+                           @gw-commit-form::push=${(e) => this.handlePush(e.detail)}
                            @gw-commit-form::cancel=${() => this.commit = undefined}
                     ></gw-commit-form>`
                     : undefined}
@@ -134,7 +135,7 @@ customElements.define('gw-workspace-project', class extends LitElement {
             const response = await fetch(`/api/workspace/${this.workspaceId}/project/${this.project.id}/commit`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
+                body: JSON.stringify({ message: data.message })
             });
 
             if (!response.ok) {
@@ -146,6 +147,32 @@ customElements.define('gw-workspace-project', class extends LitElement {
         } catch (error) {
             this.dispatchEvent(new CustomEvent('gw-workspace::commit-error', {
                 detail: { message: 'Commit fehlgeschlagen: ' + error.message },
+                bubbles: true,
+                composed: true
+            }));
+        } finally {
+            this.committing = false;
+        }
+    }
+
+    async handlePush(data) {
+        this.committing = true;
+        try {
+            const response = await fetch(`/api/workspace/${this.workspaceId}/project/${this.project.id}/push`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ branch: data.branch })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            this.commit = undefined
+            await this.loadStatus();
+        } catch (error) {
+            this.dispatchEvent(new CustomEvent('gw-workspace::commit-error', {
+                detail: { message: 'Push fehlgeschlagen: ' + error.message },
                 bubbles: true,
                 composed: true
             }));

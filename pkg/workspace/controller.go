@@ -21,7 +21,10 @@ type Controller struct {
 
 type CommitRequest struct {
 	Message string `json:"message"`
-	Branch  string `json:"branch"`
+}
+
+type PushRequest struct {
+	Branch string `json:"branch"`
 }
 
 func NewController(repo *Repository, service *Service, sessionManager *auth.Manager) (*Controller, error) {
@@ -245,8 +248,33 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			return
 		}
 
-		if err := service.ProjectCommitPush(request.Context(), workspaceId, projectId, commitRequest); err != nil {
-			slog.Default().Error("failed to push commit", "error", err)
+		if err := service.ProjectCommit(request.Context(), workspaceId, projectId, commitRequest); err != nil {
+			slog.Default().Error("failed to commit", "error", err)
+			sendError(writer, err)
+			return
+		}
+		writer.WriteHeader(http.StatusAccepted)
+	})
+
+	api.HandleFunc("POST /api/workspace/{workspaceId}/project/{projectId}/push", func(writer http.ResponseWriter, request *http.Request) {
+		workspaceId, err := uuid.Parse(request.PathValue("workspaceId"))
+		if err != nil {
+			http.Error(writer, "invalid ws id", http.StatusBadRequest)
+			return
+		}
+		projectId, err := uuid.Parse(request.PathValue("projectId"))
+		if err != nil {
+			http.Error(writer, "invalid projectId", http.StatusBadRequest)
+			return
+		}
+		var pushRequest PushRequest
+		if err := json.NewDecoder(request.Body).Decode(&pushRequest); err != nil {
+			http.Error(writer, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if err := service.ProjectPush(request.Context(), workspaceId, projectId, pushRequest); err != nil {
+			slog.Default().Error("failed to push", "error", err)
 			sendError(writer, err)
 			return
 		}

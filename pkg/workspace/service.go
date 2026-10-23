@@ -208,6 +208,28 @@ func (s *Service) DeleteProject(ctx context.Context, workspaceId uuid.UUID, proj
 	return nil
 }
 
+func (s *Service) ProjectCommit(ctx context.Context, workspaceId uuid.UUID, projectId uuid.UUID, request CommitRequest) error {
+	workspace, project, err := s.repo.ProjectById(ctx, workspaceId, projectId)
+	if err != nil {
+		return err
+	}
+	slog.Default().Info("commit", "workspaceId", workspaceId, "projectId", projectId)
+	return s.gitClient.Commit(path.Join(workspace.workspaceDir(), project.Path), request.Message)
+}
+
+func (s *Service) ProjectPush(ctx context.Context, workspaceId uuid.UUID, projectId uuid.UUID, request PushRequest) error {
+	workspace, project, err := s.repo.ProjectById(ctx, workspaceId, projectId)
+	if err != nil {
+		return err
+	}
+	token, ok := auth.Token(ctx)
+	if !ok {
+		return Forbidden
+	}
+	slog.Default().Info("push", "workspaceId", workspaceId, "projectId", projectId, "branch", request.Branch)
+	return s.gitClient.Push(token, path.Join(workspace.workspaceDir(), project.Path), request.Branch)
+}
+
 func (s *Service) ProjectCommitPush(ctx context.Context, workspaceId uuid.UUID, projectId uuid.UUID, request CommitRequest) error {
 	workspace, project, err := s.repo.ProjectById(ctx, workspaceId, projectId)
 	if err != nil {
@@ -217,8 +239,8 @@ func (s *Service) ProjectCommitPush(ctx context.Context, workspaceId uuid.UUID, 
 	if !ok {
 		return Forbidden
 	}
-	slog.Default().Info("commit push", "workspaceId", workspaceId, "projectId", projectId, "branch", request.Branch)
-	return s.gitClient.CommitAndPush(token, path.Join(workspace.workspaceDir(), project.Path), request.Message, request.Branch)
+	slog.Default().Info("commit push", "workspaceId", workspaceId, "projectId", projectId)
+	return s.gitClient.CommitAndPush(token, path.Join(workspace.workspaceDir(), project.Path), request.Message, "HEAD")
 }
 
 func isGitRepo(dir string) bool {

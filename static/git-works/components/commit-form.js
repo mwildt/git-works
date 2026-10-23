@@ -81,7 +81,11 @@ customElements.define('gw-commit-form', class extends LitElement {
                     <gw-button
                         .disabled=${this.committing || !this.commitMessage}
                         @click=${() => this.dispatchCommit()}
-                    >${this.committing ? 'Commite...' : 'Commit & Push'}</gw-button>
+                    >${this.committing ? 'Commite...' : 'Commit'}</gw-button>
+                    <gw-button
+                        .disabled=${this.committing}
+                        @click=${() => this.dispatchPush()}
+                    >${this.committing ? 'Pushe...' : 'Push'}</gw-button>
                     <span
                         class="remove-btn"
                         @click=${() => this.dispatchCancel()}
@@ -94,7 +98,16 @@ customElements.define('gw-commit-form', class extends LitElement {
     dispatchCommit() {
         this.dispatchEvent(new CustomEvent('gw-commit-form::commit', {
             detail: {
-                message: this.commitMessage,
+                message: this.commitMessage
+            },
+            bubbles: true,
+            composed: true
+        }));
+    }
+
+    dispatchPush() {
+        this.dispatchEvent(new CustomEvent('gw-commit-form::push', {
+            detail: {
                 branch: this.commitBranch
             },
             bubbles: true,
