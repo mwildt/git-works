@@ -4,6 +4,7 @@ import './atomic/input.js';
 import './atomic/error-message.js';
 
 customElements.define('gw-commit-form', class extends LitElement {
+
     static properties = {
         project: { },
         committing: { },

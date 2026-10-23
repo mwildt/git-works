@@ -55,6 +55,8 @@ func main() {
 				"run", "-d", "--replace", "--rm",
 				"--name", body.Variables["NAME"],
 				"--user", "0:0",
+				"-e", "HOME=/workspace",
+				"-e", "OPENCODE_CONFIG=/workspace/opencode.json",
 				"-e", "OPENCODE_SERVER_USERNAME=" + body.Variables["OPENCODE_SERVER_USERNAME"],
 				"-e", "OPENCODE_SERVER_PASSWORD=" + body.Variables["OPENCODE_SERVER_PASSWORD"],
 				"-p", fmt.Sprintf("%s:4096", body.Variables["PORT"]),

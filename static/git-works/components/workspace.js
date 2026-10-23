@@ -11,7 +11,8 @@ customElements.define('gw-workspace-project', class extends LitElement {
         commit: {},
         workspaceId: {},
         committing: {},
-        showCommits: { type: Boolean }
+        showCommits: { type: Boolean },
+        showGit: { type: Boolean }
     };
 
     static styles = css`
@@ -50,6 +51,7 @@ customElements.define('gw-workspace-project', class extends LitElement {
         this.status = {};
         this.committing = false;
         this.showCommits = false;
+        this.showGit = false;
     }
 
     async connectedCallback() {
@@ -81,104 +83,25 @@ customElements.define('gw-workspace-project', class extends LitElement {
 
                 <div slot="actions">
                     <gw-button @click=${() => this.init()}>Init</gw-button>
-                    <gw-button @click=${() => this.toggleCommits()}>Commits</gw-button>
+                    <gw-button @click=${() => this.showGit = true}>Git</gw-button>
                     ${this.status.has_changes
                             ? html`<gw-button danger @click=${() => this.commit = {}}>Commit</gw-button>`
                             : undefined}
                     <gw-button danger @click=${() => this.removeProject()}>Löschen</gw-button>
                 </div>
             </gw-row-footer>
-
-            ${this.commit
-                    ? html`<gw-commit-form .project=${this.project} .committing=${this.committing} .commitBranch=${this.project.branch}
-                           @gw-commit-form::commit=${(e) => this.handleCommit(e.detail)}
-                           @gw-commit-form::push=${(e) => this.handlePush(e.detail)}
-                           @gw-commit-form::cancel=${() => this.commit = undefined}
-                    ></gw-commit-form>`
-                    : undefined}
-
-            ${this.showCommits
-                    ? this.renderCommits()
-                    : undefined}
+            
+            ${this.showGit ? html `<gw-modal>
+                <gw-project-git .workspaceId=${this.workspaceId} .project=${this.project} .commitBranch=${this.project.branch}
+                        @gw-project-git::success=${() => {
+                            this.loadStatus();
+                            this.showGit = false
+                        }}
+                        @gw-project-git::cancel=${() => this.showGit = false}
+                        ></gw-project-git>
+                </gw-modal>`
+            : undefined }
         `
-    }
-
-    renderCommits() {
-        const commits = this.status.commits || [];
-        return html`
-            <div class="commits">
-                <div class="commits-title">Commits auf HEAD, nicht im Branch ${this.project.branch}</div>
-                ${commits.length > 0
-                        ? html`<ul class="commit-list">
-                            ${commits.map(commit => html`<li class="commit-item">
-                                <span class="commit-short">${commit.short}</span>
-                                <span>${commit.author}</span>
-                                <span>${commit.message}</span>
-                            </li>`)}
-                        </ul>`
-                        : html`<span>Keine Commits vorhanden.</span>`}
-            </div>
-        `;
-    }
-
-    toggleCommits() {
-        if (!this.showCommits) {
-            this.loadStatus();
-        }
-        this.showCommits = !this.showCommits;
-    }
-
-
-    async handleCommit(data) {
-        this.committing = true;
-        try {
-            const response = await fetch(`/api/workspace/${this.workspaceId}/project/${this.project.id}/commit`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: data.message })
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-
-            this.commit = undefined
-            await this.loadStatus();
-        } catch (error) {
-            this.dispatchEvent(new CustomEvent('gw-workspace::commit-error', {
-                detail: { message: 'Commit fehlgeschlagen: ' + error.message },
-                bubbles: true,
-                composed: true
-            }));
-        } finally {
-            this.committing = false;
-        }
-    }
-
-    async handlePush(data) {
-        this.committing = true;
-        try {
-            const response = await fetch(`/api/workspace/${this.workspaceId}/project/${this.project.id}/push`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ branch: data.branch })
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-
-            this.commit = undefined
-            await this.loadStatus();
-        } catch (error) {
-            this.dispatchEvent(new CustomEvent('gw-workspace::commit-error', {
-                detail: { message: 'Push fehlgeschlagen: ' + error.message },
-                bubbles: true,
-                composed: true
-            }));
-        } finally {
-            this.committing = false;
-        }
     }
 
     async loadStatus() {
@@ -208,8 +131,6 @@ customElements.define('gw-workspace-project', class extends LitElement {
             composed: true,
         }));
     }
-
-
 
     async removeProject(project) {
         const delResponse = await fetch(`/api/workspace/${this.workspaceId}/project/${this.project.id}`, {
@@ -270,10 +191,6 @@ customElements.define('gw-workspace-workload', class extends LitElement {
                     ${this.status && this.status.status == "down"
                             ? html`<gw-button @click=${() => this.run()}>Start</gw-button>`
                             : undefined}
-                 
-                    
-                    
-<!--                    <gw-button danger @click=${() => this.remove()}>Löschen</gw-button>-->
                 </div>
             </gw-row-footer>
         `
