@@ -80,6 +80,13 @@ func (g *Git) Clone(token gitlab.Token, url string, path string, branch string) 
 }
 
 func (g *Git) CommitAndPush(token gitlab.Token, dir string, message string, branch string) error {
+	if err := g.Commit(dir, message); err != nil {
+		return err
+	}
+	return g.Push(token, dir, branch)
+}
+
+func (g *Git) Commit(dir string, message string) error {
 	if !isGitRepo(dir) {
 		return fmt.Errorf("unable to commit, %s is not a git repo", dir)
 	}
@@ -95,16 +102,19 @@ func (g *Git) CommitAndPush(token gitlab.Token, dir string, message string, bran
 			return fmt.Errorf("git %s failed: %s (%s)", args[0], err.Error(), strings.TrimSpace(string(output)))
 		}
 	}
+	return nil
+}
+
+func (g *Git) Push(token gitlab.Token, dir string, branch string) error {
+	if !isGitRepo(dir) {
+		return fmt.Errorf("unable to push, %s is not a git repo", dir)
+	}
 
 	if branch == "" {
 		branch = "HEAD"
 	} else if current, err := currentBranch(dir); err == nil && branch != current {
 		cmd := exec.Command("git", "-C", dir, "checkout", "-B", branch)
-		cmd.Env = append(os.Environ(),
-			"SSH_ASKPASS_REQUIRE=force",
-			fmt.Sprintf("SSH_ASKPASS=%s", config.GetEnv("SSH_ASKPASS", "/usr/local/bin/git-askpass")),
-			fmt.Sprintf("GIT_TOKEN=%s", token.Value),
-		)
+		cmd.Env = askpassEnv(token)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("git checkout failed: %s (%s)", err.Error(), strings.TrimSpace(string(output)))
 		}
@@ -112,16 +122,20 @@ func (g *Git) CommitAndPush(token gitlab.Token, dir string, message string, bran
 
 	slog.Info("pushing", "dir", dir, "branch", branch)
 	cmd := exec.Command("git", "-C", dir, "push", "-u", "origin", branch)
-	cmd.Env = append(os.Environ(),
-		"SSH_ASKPASS_REQUIRE=force",
-		fmt.Sprintf("SSH_ASKPASS=%s", config.GetEnv("SSH_ASKPASS", "/usr/local/bin/git-askpass")),
-		fmt.Sprintf("GIT_TOKEN=%s", token.Value),
-	)
+	cmd.Env = askpassEnv(token)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git push failed: %s (%s)", err.Error(), strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func askpassEnv(token gitlab.Token) []string {
+	return append(os.Environ(),
+		"SSH_ASKPASS_REQUIRE=force",
+		fmt.Sprintf("SSH_ASKPASS=%s", config.GetEnv("SSH_ASKPASS", "/usr/local/bin/git-askpass")),
+		fmt.Sprintf("GIT_TOKEN=%s", token.Value),
+	)
 }
 
 func (g *Git) CommitsAhead(dir string, branch string) ([]Commit, error) {
