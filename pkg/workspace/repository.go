@@ -35,8 +35,8 @@ func NewRepository() (*Repository, error) {
 		items: make(map[string]*Workspace),
 	}
 
-	if os.Getenv("WORSPACE_LOG") != "" {
-		file := path.Join(os.Getenv("WORSPACE_LOG"))
+	if os.Getenv("WORKSPACE_LOG") != "" {
+		file := path.Join(os.Getenv("WORKSPACE_LOG"))
 		slog.Default().Info("create workspace log", "file", file)
 
 		appender, err := storage.NewFileAppender(file)
@@ -44,7 +44,7 @@ func NewRepository() (*Repository, error) {
 			return nil, err
 		}
 		manager.log = &eventlog{
-			file:     path.Join(os.Getenv("WORSPACE_LOG")),
+			file:     path.Join(os.Getenv("WORKSPACE_LOG")),
 			appender: appender,
 		}
 
