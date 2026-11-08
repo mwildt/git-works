@@ -17,6 +17,7 @@ type Controller struct {
 	repo           *Repository
 	service        *Service
 	sessionManager *auth.Manager
+	workspaceView  *UserWorkspacesView
 }
 
 type CommitRequest struct {
@@ -27,11 +28,12 @@ type PushRequest struct {
 	Branch string `json:"branch"`
 }
 
-func NewController(repo *Repository, service *Service, sessionManager *auth.Manager) (*Controller, error) {
+func NewController(repo *Repository, service *Service, sessionManager *auth.Manager, workspaceView *UserWorkspacesView) (*Controller, error) {
 	return &Controller{
 		repo:           repo,
 		service:        service,
 		sessionManager: sessionManager,
+		workspaceView:  workspaceView,
 	}, nil
 }
 
@@ -40,16 +42,14 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 	service := ctrl.service
 
 	api.HandleFunc("GET /api/workspace", func(w http.ResponseWriter, r *http.Request) {
-		workspaces, err := ctrl.repo.All(r.Context())
-		if err != nil {
-			sendError(w, err)
+		owner, ok := auth.Owner(r.Context())
+		if !ok {
+			slog.Default().Warn("no owner")
+			sendErrorMessage(w, http.StatusBadRequest, "no owner")
 			return
 		}
-		var response []WorkspaceResponse
-		for _, w := range workspaces {
-			response = append(response, ToWorkspaceResponse(w))
-		}
-		sendJson(w, http.StatusOK, response)
+		workspaces := ctrl.workspaceView.ByOwner(owner)
+		sendJson(w, http.StatusOK, workspaces)
 	})
 
 	api.HandleFunc("POST /api/workspace", func(w http.ResponseWriter, r *http.Request) {
@@ -69,13 +69,13 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			return
 		}
 
-		workspace, err := ctrl.repo.ById(r.Context(), workspaceId)
+		workspace, err := ctrl.repo.LoadById(r.Context(), workspaceId)
 		if err != nil {
 			slog.Default().Warn("workspace not found")
 			sendError(w, err)
 			return
 		}
-		sendJson(w, http.StatusOK, ToWorkspaceResponse(&workspace))
+		sendJson(w, http.StatusOK, ToWorkspaceResponse(workspace))
 	})
 
 	api.HandleFunc("DELETE /api/workspace/{workspaceId}", func(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +101,7 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			return
 		}
 
-		workspace, err := ctrl.repo.ById(request.Context(), workspaceId)
+		workspace, err := ctrl.repo.byId(request.Context(), workspaceId)
 		if err != nil {
 			sendError(writer, err)
 			return
@@ -137,14 +137,17 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			return
 		}
 
-		workspace, err := ctrl.repo.ById(request.Context(), workspaceId)
+		workspace, err := ctrl.repo.LoadById(request.Context(), workspaceId)
 		if err != nil {
 			slog.Default().Warn("workspace not found")
 			sendError(writer, err)
 			return
 		}
-		workspace.addProject(project.Path, project.Project.GitUrl, project.Branch.Name)
-		if err = ctrl.repo.Update(request.Context(), workspace); err != nil {
+		if err := workspace.addProject(project.Path, project.Project.GitUrl, project.Branch.Name); err != nil {
+			sendError(writer, err)
+			return
+		}
+		if err = ctrl.repo.Save(request.Context(), workspace); err != nil {
 			sendError(writer, err)
 			return
 		}
@@ -460,6 +463,7 @@ func sendError(w http.ResponseWriter, err error) {
 		misc.SendErrorMessage(w, http.StatusForbidden, "das ist nicht erlaubt")
 		return
 	}
+	slog.Default().Warn(err.Error())
 	misc.SendErrorMessage(w, http.StatusInternalServerError, "ein fehler ist aufgetrten")
 }
 
@@ -502,7 +506,7 @@ func ToWorkspaceResponse(workspace *Workspace) WorkspaceResponse {
 		response.Projects = append(response.Projects, ProjectResponse{
 			Id:     project.Id,
 			Path:   project.Path,
-			GitUrl: project.Path,
+			GitUrl: project.GitUrl,
 			Branch: project.Branch,
 		})
 	}

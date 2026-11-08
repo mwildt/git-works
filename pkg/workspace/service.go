@@ -3,57 +3,34 @@ package workspace
 import (
 	"context"
 	"log/slog"
-	"net"
 	"os"
 	"os/exec"
 	"path"
-	"strconv"
 	"strings"
 	"uuid"
 
 	"gtihub.com/mwildt/git-works/pkg/actions"
 	"gtihub.com/mwildt/git-works/pkg/auth"
-	"gtihub.com/mwildt/git-works/pkg/config"
 	"gtihub.com/mwildt/git-works/pkg/git"
 )
 
 type ProjectStatus struct {
-	ProjectId   uuid.UUID    `json:"project_id"`
-	Initialized bool         `json:"initialized"`
-	HasChanges  bool         `json:"has_changes"`
-	Commits     []git.Commit `json:"commits"`
+	ProjectId     uuid.UUID    `json:"project_id"`
+	Initialized   bool         `json:"initialized"`
+	HasChanges    bool         `json:"has_changes"`
+	CurrentBranch string       `json:"current_branch"`
+	Commits       []git.Commit `json:"commits"`
 }
 
 type Service struct {
-	repo      *Repository
-	gitClient *git.Git
-	actions   *actions.Client
+	repo        *Repository
+	gitClient   *git.Git
+	actions     *actions.Client
+	portManager *PortManager
 }
 
-func NewService(repo *Repository, gitClient *git.Git, actions *actions.Client) *Service {
-	return &Service{repo: repo, gitClient: gitClient, actions: actions}
-}
-
-func (s *Service) CreateOpencodeWorkload(ws Workspace, portProvider func(string) (int, error)) (workoad Workload, err error) {
-
-	host := config.GetEnv("OPENCODE_REMOTE_HOST", "127.0.0.1")
-	port, err := portProvider(host)
-	if err != nil {
-		return
-	}
-
-	return Workload{
-		Id:          uuid.New(),
-		WorkspaceId: ws.Id,
-		Type:        "OpenCode",
-		Data: OpencodeConfig{
-			Key:          "workspaces_opencode_" + ws.Id.String()[0:10],
-			AuthUsername: "git-works",
-			AuthPassword: "password",
-			Host:         host,
-			Port:         port,
-		},
-	}, nil
+func NewService(repo *Repository, gitClient *git.Git, actions *actions.Client, portManager *PortManager) *Service {
+	return &Service{repo: repo, gitClient: gitClient, actions: actions, portManager: portManager}
 }
 
 func (s *Service) Create(ctx context.Context) (*Workspace, error) {
@@ -63,47 +40,18 @@ func (s *Service) Create(ctx context.Context) (*Workspace, error) {
 	}
 
 	workspace := NewWorkspace(owner)
-	if err := s.repo.Update(ctx, workspace); err != nil {
-		return nil, err
-	}
-
 	if err := os.MkdirAll(workspace.workspaceDir(), os.ModePerm); err != nil {
 		slog.Default().Error("failed to create workspace directory", "error", err)
 	}
-	workload, err := s.CreateOpencodeWorkload(workspace, func(string) (int, error) {
-		return s.nextPort(config.GetEnv("OPENCODE_REMOTE_HOST", "127.0.0.1")), nil
-	})
-	workspace.Workloads = append(workspace.Workloads, workload)
-	s.repo.Update(ctx, workspace)
 
-	if err != nil {
-		slog.Default().Error("unable to create opencode Workload ", "error", err)
-		if err := os.RemoveAll(workspace.workspaceDir()); err != nil {
-			slog.Default().Warn("unable to rollback workspace", "error", err)
-		}
+	if err := s.repo.Save(ctx, workspace); err != nil {
 		return nil, err
 	}
 
-	return &workspace, nil
+	return workspace, nil
 }
 
-func (m *Service) nextPort(host string) int {
-	port := config.GetEnvInt("WORKSPACE_START_PORT", 9000)
-	for _, ws := range m.repo.all() {
-		if ws.Opencode.Host != host {
-			continue
-		}
-		if ws.Opencode.Port >= port {
-			port = ws.Opencode.Port + 1
-		}
-	}
-	for isPortBusy(host, strconv.Itoa(port)) {
-		port++
-	}
-	return port
-}
-
-func (s *Service) ProjectStatus(_ context.Context, workspace Workspace, project Project) (ProjectStatus, error) {
+func (s *Service) ProjectStatus(_ context.Context, workspace *Workspace, project Project) (ProjectStatus, error) {
 	projectDir := path.Join(workspace.workspaceDir(), project.Path)
 	// den branch zu bestimmenen ist eigentlich deutlich komplizietrer....
 	commits, err := s.gitClient.CommitsAhead(projectDir, "origin/"+project.Branch)
@@ -112,10 +60,11 @@ func (s *Service) ProjectStatus(_ context.Context, workspace Workspace, project 
 		commits = []git.Commit{}
 	}
 	return ProjectStatus{
-		ProjectId:   project.Id,
-		Initialized: isGitRepo(projectDir),
-		HasChanges:  hasGitChanges(projectDir),
-		Commits:     commits,
+		ProjectId:     project.Id,
+		Initialized:   isGitRepo(projectDir),
+		CurrentBranch: currentBranch(projectDir),
+		HasChanges:    hasGitChanges(projectDir),
+		Commits:       commits,
 	}, nil
 
 }
@@ -138,7 +87,7 @@ func (s *Service) WorkspaceInit(ctx context.Context, workspace Workspace) error 
 	return nil
 }
 
-func (s *Service) ProjectInit(ctx context.Context, workspace Workspace, project Project) error {
+func (s *Service) ProjectInit(ctx context.Context, workspace *Workspace, project Project) error {
 	token, ok := auth.Token(ctx)
 	if !ok {
 		return Forbidden
@@ -146,11 +95,11 @@ func (s *Service) ProjectInit(ctx context.Context, workspace Workspace, project 
 	return project.Init(token, s.gitClient, workspace.workspaceDir())
 }
 
-func (s *Service) WorkloadInit(ctx context.Context, workspace Workspace, workload Workload) error {
+func (s *Service) WorkloadInit(ctx context.Context, workspace *Workspace, workload Workload) error {
 	return workload.Init(workspace.baseDir())
 }
 
-func (s *Service) WorkloadStart(ctx context.Context, workspace Workspace, workload Workload) error {
+func (s *Service) WorkloadStart(ctx context.Context, workspace *Workspace, workload Workload) error {
 	token, ok := auth.Token(ctx)
 	if !ok {
 		return Forbidden
@@ -158,7 +107,7 @@ func (s *Service) WorkloadStart(ctx context.Context, workspace Workspace, worklo
 	return workload.Start(token, s.actions, workspace.Id)
 }
 
-func (s *Service) WorkloadStop(ctx context.Context, workspace Workspace, workload Workload) error {
+func (s *Service) WorkloadStop(ctx context.Context, workspace *Workspace, workload Workload) error {
 	token, ok := auth.Token(ctx)
 	if !ok {
 		return Forbidden
@@ -167,7 +116,7 @@ func (s *Service) WorkloadStop(ctx context.Context, workspace Workspace, workloa
 }
 
 func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
-	workspace, err := s.repo.ById(ctx, id)
+	workspace, err := s.repo.byId(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -194,7 +143,7 @@ func (s *Service) DeleteProject(ctx context.Context, workspaceId uuid.UUID, proj
 	if ok := workspace.deleteProjectById(projectId); !ok {
 		return err
 	}
-	if err := s.repo.Update(ctx, workspace); err != nil {
+	if err := s.repo.Save(ctx, workspace); err != nil {
 		return err
 	}
 	go func() {
@@ -261,12 +210,18 @@ func hasGitChanges(dir string) bool {
 	return len(strings.TrimSpace(string(output))) > 0
 }
 
-func isPortBusy(host, port string) bool {
-	slog.Default().Info("checking port busy", "host", host, "port", port)
-	listener, err := net.Listen("tcp", ":"+port)
-	if err != nil {
-		return true // Port belegt oder nicht verfügbar
+func currentBranch(dir string) string {
+	if !isGitRepo(dir) {
+		return ""
 	}
-	listener.Close()
-	return false
+
+	cmd := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		slog.Warn("failed to get current branch", "dir", dir, "error", err)
+		return ""
+	}
+
+	return strings.TrimSpace(string(output))
+
 }

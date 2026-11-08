@@ -19,6 +19,7 @@ import (
 	"gtihub.com/mwildt/git-works/pkg/actions"
 	"gtihub.com/mwildt/git-works/pkg/auth"
 	"gtihub.com/mwildt/git-works/pkg/config"
+	"gtihub.com/mwildt/git-works/pkg/events"
 	"gtihub.com/mwildt/git-works/pkg/git"
 	"gtihub.com/mwildt/git-works/pkg/gitlab"
 	"gtihub.com/mwildt/git-works/pkg/misc"
@@ -69,12 +70,35 @@ func main() {
 
 	opencode := http.NewServeMux()
 
-	workspaceRepo, err := workspaces.NewRepository()
+	dispatcher := events.NewDispatcher()
+
+	workspaceRepo, err := workspaces.NewRepository(
+		config.GetEnv("WORKSPACE_LOG", "./data/workspace.v2.log"),
+		dispatcher,
+	)
+
+	portmanager := workspaces.NewPortManager(config.GetEnvInt("WORKSPACE_START_PORT", 9000))
+	dispatcher.RegisterFunc(portmanager.Handle)
+
+	workspaceView := workspaces.NewUserWorkspacesView()
+	dispatcher.RegisterFunc(workspaceView.Handle)
+
+	workspaceInit := workspaces.NewWorkloadInitializer(workspaceRepo, portmanager)
+	dispatcher.RegisterFunc(workspaceInit.Handle)
+
 	if err != nil {
 		log.Fatal(err)
 	}
-	workspaceService := workspaces.NewService(workspaceRepo, gitClient, opencodeActions)
-	workspaceController, err := workspaces.NewController(workspaceRepo, workspaceService, sessionManager)
+
+	workspaceService := workspaces.NewService(workspaceRepo, gitClient, opencodeActions, portmanager)
+
+	workspaceController, err := workspaces.NewController(workspaceRepo, workspaceService, sessionManager, workspaceView)
+
+	// und jetzt das Replay Aller Events starten
+	if err = workspaceRepo.Replay(); err != nil {
+		log.Fatal(err)
+	}
+
 	api := http.NewServeMux()
 
 	workspaceController.SetUpApi(api)
@@ -141,8 +165,14 @@ func main() {
 			http.Error(writer, "not found", http.StatusBadRequest)
 			return
 		}
-		request.Header.Set("Authorization", fmt.Sprintf("Basic %s", workload.Data.BasicAuth()))
-		target, err := url.Parse(workload.TargetUrl())
+
+		config, ok := workload.Data.(workspaces.OpencodeWorkloadConfiguration)
+		if !ok {
+			http.Error(writer, "not found", http.StatusBadRequest)
+		}
+
+		request.Header.Set("Authorization", fmt.Sprintf("Basic %s", config.BasicAuth()))
+		target, err := url.Parse(config.TargetUrl())
 		if err != nil {
 			slog.Default().Warn("invalid workload target url", "error", err)
 			http.Error(writer, "invalid workload target url", http.StatusBadGateway)

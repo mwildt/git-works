@@ -3,125 +3,193 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
-	"log/slog"
-	"os"
-	"path"
+	"time"
 	"uuid"
 
 	"gtihub.com/mwildt/git-works/pkg/auth"
+	"gtihub.com/mwildt/git-works/pkg/events"
 	"gtihub.com/mwildt/git-works/pkg/storage"
 )
 
 type (
+	DomainEvent events.DomainEvent
+
 	eventlog struct {
 		file     string
 		appender storage.Appender
 	}
 
 	Repository struct {
-		items map[string]*Workspace
-		log   *eventlog
+		log        *eventlog
+		dispatcher *events.Dispatcher
 	}
 
-	Event struct {
-		Eventtype string
-		Event     json.RawMessage
+	PersistentEvent struct {
+		AggregateId uuid.UUID       `json:"aggregate_id"`
+		EventType   string          `json:"type"`
+		Timestamp   int64           `json:"time"`
+		Data        json.RawMessage `json:"data"`
+	}
+
+	envelope struct {
+		isReplay    bool
+		aggregateId uuid.UUID
+		time        time.Time
+		event       events.DomainEvent
+	}
+
+	collector struct {
+		aggregateId uuid.UUID
+		aggregate   *Workspace
 	}
 )
 
-func NewRepository() (*Repository, error) {
-	manager := Repository{
-		items: make(map[string]*Workspace),
-	}
-
-	if os.Getenv("WORKSPACE_LOG") != "" {
-		file := path.Join(os.Getenv("WORKSPACE_LOG"))
-		slog.Default().Info("create workspace log", "file", file)
-
-		appender, err := storage.NewFileAppender(file)
-		if err != nil {
-			return nil, err
-		}
-		manager.log = &eventlog{
-			file:     path.Join(os.Getenv("WORKSPACE_LOG")),
-			appender: appender,
-		}
-
-		if scan, err := storage.NewFileScanner(file); err != nil {
-			return nil, err
-		} else if err = scan.Replay(storage.Consuming(manager.handleLog)); err != nil && err != io.EOF {
-			return nil, err
-		}
-
-	}
-
-	return &manager, nil
+func (e envelope) IsReplay() bool {
+	return e.isReplay
 }
 
-func (repo *Repository) handleLog(record storage.OffsetRecord) error {
-	var event Event
-	if err := json.Unmarshal(record.Record, &event); err != nil {
-		return err
+func (e envelope) AggregateId() uuid.UUID {
+	return e.aggregateId
+}
+
+func (e envelope) EventType() string {
+	return e.event.EventType()
+}
+
+func (e envelope) Event() events.DomainEvent {
+	return e.event
+}
+
+func (e envelope) Time() time.Time {
+	return e.time
+}
+
+func (c *collector) handle(envelop events.Envelope) error {
+	if c.aggregateId != envelop.AggregateId() {
+		return nil
+	}
+	if _, ok := envelop.Event().(*WorkspaceDeleted); ok {
+		c.aggregate = nil
+		return nil
+	}
+	if _, ok := envelop.Event().(*WorkspaceCreated); ok {
+		c.aggregate = &Workspace{}
+	}
+	c.aggregate.apply(envelop.Event())
+	return nil
+}
+
+func (c collector) Get() (*Workspace, error) {
+	if nil == c.aggregate {
+		return nil, NotFound
+	}
+	return c.aggregate, nil
+}
+
+func NewRepository(file string, dispatcher *events.Dispatcher) (*Repository, error) {
+
+	appender, err := storage.NewFileAppender(file)
+	if err != nil {
+		return nil, err
 	}
 
-	switch event.Eventtype {
-	case "workspace.full":
-		{
-			var ws Workspace
-			if err := json.Unmarshal(event.Event, &ws); err != nil {
-				slog.Error("error reading event", "type", event.Eventtype, "error", err, "data", event.Event)
-				return err
-			}
-			repo.items[ws.Id.String()] = &ws
-		}
-	case "workspace.delete":
-		{
-			var workspaceId uuid.UUID
-			if err := json.Unmarshal(event.Event, &workspaceId); err != nil {
-				slog.Error("error reading event", "type", event.Eventtype, "error", err, "data", event.Event)
-				return err
-			}
-			delete(repo.items, workspaceId.String())
-		}
+	return &Repository{
+		log: &eventlog{
+			file:     file,
+			appender: appender,
+		},
+		dispatcher: dispatcher,
+	}, nil
+}
 
+func (repo *Repository) Replay() error {
+	if scan, err := storage.NewFileScanner(repo.log.file); err != nil {
+		return err
+	} else if err = scan.Replay(storage.Consuming(func(record storage.OffsetRecord) error {
+		event, err := repo.deserialize(record)
+		if err != nil {
+			return err
+		}
+		return repo.dispatcher.Dispatch(context.Background(), event)
+	})); err != nil && err != io.EOF {
+		return err
 	}
 	return nil
 }
 
-func (repo *Repository) Update(ctx context.Context, workspace Workspace) error {
+func (repo *Repository) LoadById(_ context.Context, aggregateId uuid.UUID) (*Workspace, error) {
+	collector := &collector{aggregateId: aggregateId}
+	if scan, err := storage.NewFileScanner(repo.log.file); err != nil {
+		return nil, err
+	} else if err = scan.Replay(storage.Consuming(func(record storage.OffsetRecord) error {
+		if event, err := repo.deserialize(record); err != nil {
+			return err
+		} else if err = collector.handle(event); err != nil {
+			return err
+		}
+		return nil
+	})); err != nil && err != io.EOF {
+		return nil, err
+	}
+	return collector.Get()
+}
+
+func (repo *Repository) Save(ctx context.Context, workspace *Workspace) error {
 	owner, ok := auth.Owner(ctx)
 	if !ok {
 		return Forbidden
 	}
-
 	if !workspace.HasOwner(owner) {
 		return Forbidden
 	}
-
-	if existing, err := repo.ById(ctx, workspace.Id); err == nil && !existing.HasOwner(owner) {
-		return Forbidden
+	for _, event := range workspace.events {
+		if err := repo.append(ctx, workspace.Id, event); err != nil {
+			return err
+		}
 	}
-
-	repo.items[workspace.Id.String()] = &workspace
-	repo.appendEvent("workspace.full", workspace)
+	workspace.clearEvents()
 	return nil
 }
 
 func (repo *Repository) Delete(ctx context.Context, workspaceId uuid.UUID) error {
-	workspace, err := repo.ById(ctx, workspaceId)
+	workspace, err := repo.LoadById(ctx, workspaceId)
 	if err != nil {
 		return err
 	}
-	delete(repo.items, workspace.Id.String())
-	go repo.appendEvent("workspace.delete", workspace.Id)
-	return nil
+	event := WorkspaceDeleted{
+		Owner: workspace.Owner,
+		Id:    workspace.Id,
+	}
+
+	return repo.append(ctx, workspace.Id, event)
 }
 
-func (repo *Repository) ById(ctx context.Context, workspaceId uuid.UUID) (workspace Workspace, err error) {
+func (repo *Repository) ProjectById(ctx context.Context, workspaceId uuid.UUID, pid uuid.UUID) (_ *Workspace, _ Project, err error) {
+	if workspace, err := repo.LoadById(ctx, workspaceId); err != nil {
+		return nil, Project{}, err
+	} else if project, ok := workspace.ProjectById(pid); !ok {
+		return nil, Project{}, NotFound
+	} else {
+		return workspace, project, nil
+	}
+}
+
+func (repo *Repository) WorkloadById(ctx context.Context, workspaceId uuid.UUID, pid uuid.UUID) (_ *Workspace, _ Workload, err error) {
+	if workspace, err := repo.LoadById(ctx, workspaceId); err != nil {
+		return nil, Workload{}, err
+	} else if workload, ok := workspace.WorkloadById(pid); !ok {
+		return nil, Workload{}, NotFound
+	} else {
+		return workspace, workload, nil
+	}
+}
+
+func (repo *Repository) byId(ctx context.Context, workspaceId uuid.UUID) (workspace Workspace, err error) {
 	if owner, ok := auth.Owner(ctx); !ok {
 		return Workspace{}, Forbidden
-	} else if workspace, ok := repo.items[workspaceId.String()]; !ok {
+	} else if workspace, err := repo.LoadById(ctx, workspaceId); err != nil {
 		return Workspace{}, NotFound
 	} else if workspace.Owner != owner {
 		return Workspace{}, NotFound
@@ -130,50 +198,87 @@ func (repo *Repository) ById(ctx context.Context, workspaceId uuid.UUID) (worksp
 	}
 }
 
-func (repo *Repository) ProjectById(ctx context.Context, workspaceId uuid.UUID, pid uuid.UUID) (_ Workspace, _ Project, err error) {
-	if workspace, err := repo.ById(ctx, workspaceId); err != nil {
-		return Workspace{}, Project{}, err
-	} else if project, ok := workspace.ProjectById(pid); !ok {
-		return Workspace{}, Project{}, NotFound
-	} else {
-		return workspace, project, nil
+func (repo *Repository) append(ctx context.Context, aggregateId uuid.UUID, event events.DomainEvent) error {
+	if persistentEvent, err := repo.serialize(aggregateId, event); err != nil {
+		return err
+	} else if err = repo.write(persistentEvent); err != nil {
+		return err
+	} else if repo.dispatcher.Dispatch(ctx, envelope{
+		isReplay:    false,
+		aggregateId: persistentEvent.AggregateId,
+		time:        time.UnixMilli(persistentEvent.Timestamp),
+		event:       event,
+	}); err != nil {
+		return err
 	}
+	return nil
 }
 
-func (repo *Repository) WorkloadById(ctx context.Context, workspaceId uuid.UUID, pid uuid.UUID) (_ Workspace, _ Workload, err error) {
-	if workspace, err := repo.ById(ctx, workspaceId); err != nil {
-		return Workspace{}, Workload{}, err
-	} else if workload, ok := workspace.WorkloadById(pid); !ok {
-		return Workspace{}, Workload{}, NotFound
-	} else {
-		return workspace, workload, nil
+func (repo *Repository) deserialize(record storage.OffsetRecord) (events.Envelope, error) {
+	var persistentEvent PersistentEvent
+	err := json.Unmarshal(record.Record, &persistentEvent)
+	if err != nil {
+		return nil, err
 	}
+	factory, ok := map[string]func() DomainEvent{
+		EventTypeCreated: func() DomainEvent {
+			return &WorkspaceCreated{}
+		},
+		EventTypeDeleted: func() DomainEvent {
+			return &WorkspaceDeleted{}
+		},
+		ProjectEventTypeCreated: func() DomainEvent {
+			return &ProjectCreated{}
+		},
+		ProjectEventTypeDeleted: func() DomainEvent {
+			return &ProjectDeleted{}
+		},
+		OpencodeWorkloadEventTypeCreated: func() DomainEvent {
+			return &OpencodeWorkloadCreated{}
+		},
+		OpencodeWorkloadEventTypeDeleted: func() DomainEvent {
+			return &OpencodeWorkloadDeleted{}
+		},
+		SSHWorkloadEventTypeCreated: func() DomainEvent {
+			return &SSHWorkloadCreated{}
+		},
+	}[persistentEvent.EventType]
+
+	if !ok {
+		return nil, fmt.Errorf("invalid event type %s", persistentEvent.EventType)
+	}
+
+	event := factory()
+
+	err = json.Unmarshal(persistentEvent.Data, event)
+	if err != nil {
+		return nil, err
+	}
+	return envelope{
+		isReplay:    true,
+		aggregateId: persistentEvent.AggregateId,
+		time:        time.UnixMilli(persistentEvent.Timestamp),
+		event:       event,
+	}, nil
+
 }
 
-func (repo *Repository) All(ctx context.Context) (res []*Workspace, err error) {
-	if owner, ok := auth.Owner(ctx); !ok {
-		return res, Forbidden
-	} else {
-		for _, w := range repo.items {
-			if w.Owner == owner {
-				res = append(res, w)
-			}
-		}
-		return res, nil
+func (repo *Repository) serialize(aggregateId uuid.UUID, event DomainEvent) (PersistentEvent, error) {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return PersistentEvent{}, err
 	}
+	return PersistentEvent{
+		AggregateId: aggregateId,
+		EventType:   event.EventType(),
+		Timestamp:   time.Now().UnixMilli(),
+		Data:        payload,
+	}, nil
 }
 
-func (repo *Repository) appendEvent(eventtype string, ws any) error {
+func (repo *Repository) write(event PersistentEvent) error {
 	if repo.log != nil {
-		payload, err := json.Marshal(ws)
-		if err != nil {
-			return err
-		}
-
-		rawEvent, err := json.Marshal(Event{
-			Eventtype: eventtype,
-			Event:     payload,
-		})
+		rawEvent, err := json.Marshal(event)
 		if err != nil {
 			return err
 		}
@@ -181,13 +286,4 @@ func (repo *Repository) appendEvent(eventtype string, ws any) error {
 		return err
 	}
 	return nil
-
-}
-
-// TODO: DAs hier könnte man besser anhand einer ROlle machen -> Aber fürs erste gehts
-func (repo *Repository) all() (res []Workspace) {
-	for _, ws := range repo.items {
-		res = append(res, *ws)
-	}
-	return res
 }

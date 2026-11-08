@@ -40,3 +40,35 @@ requests:
           "OPENCODE_SERVER_PASSWORD": "{{.oc_password}}"
         }
       }
+  SSH_START:
+    method: POST
+    url: "http://127.0.0.1:8999/api/v4/pipelines"
+    headers:
+      Content-Type: application/json
+    body: |
+      {
+        "ref": "main",
+        "variables": {
+          "JOB": "SSH_UP",
+          "WORKSPACE_ID": "{{.workspaceId}}",
+          "WORKLOAD_ID": "{{.workloadId}}",
+          "NAME": "{{.name}}",
+          "PORT": "{{.port}}"
+        }
+      }
+  SSH_STOP:
+    method: POST
+    url: "http://127.0.0.1:8999/api/v4/pipelines"
+    headers:
+      Content-Type: application/json
+    body: |
+      {
+        "ref": "main",
+        "variables": {
+          "JOB": "SSH_STOP",
+          "WORKSPACE_ID": "{{.workspaceId}}",
+          "WORKLOAD_ID": "{{.workloadId}}",
+          "NAME": "{{.name}}",
+          "PORT": "{{.port}}"
+        }
+      }

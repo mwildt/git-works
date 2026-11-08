@@ -79,6 +79,11 @@ customElements.define('gw-workspace-project', class extends LitElement {
                                     ? html`<gw-badge warn>Änderungen vorhanden</span>`
                                     : html`<gw-badge ok>Keine Änderungen</gw-badge >`)
                             : undefined}
+                    
+                    ${this.status.initialized
+                           ? html`<gw-badge>Current-Branch: ${this.status.current_branch}</span>`
+                           : undefined}
+                    
                 </div>
 
                 <div slot="actions">

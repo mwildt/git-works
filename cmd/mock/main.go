@@ -44,12 +44,13 @@ func main() {
 
 		pipelineID++
 
-		slog.Default().Info("run new pipeline ", "pipelineID", pipelineID, "variables", body.Variables, "ref", body.Ref)
+		slog.Default().Info("run new pipeline ", "pipelineID", pipelineID, "variables", body.Variables, "ref", body.Ref, "job", body.Variables["NAME"])
 
 		workspaceId := body.Variables["WORKSPACE_ID"]
 		workloadId := body.Variables["WORKLOAD_ID"]
 
 		opencodeFile := fmt.Sprintf("opencode.%s.json", workloadId)
+
 		if body.Variables["JOB"] == "OC_UP" {
 			args := []string{
 				"run", "-d", "--replace", "--rm",
