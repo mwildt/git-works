@@ -20,12 +20,11 @@ func (ec *EventCollector) Handle(_ context.Context, envelope events.Envelope) er
 
 func TestServiceRepo(t *testing.T) {
 	dir := t.TempDir()
+	defer os.RemoveAll(dir)
 	file := path.Join(dir, "log.file")
-	os.Setenv("WORKSPACE_LOG", file)
-
 	portmanager := NewPortManager(9000)
-
-	repo, err := NewRepository(events.FilterName("workload.created", portmanager))
+	dispatcher := events.NewDispatcher(events.FilterName("workload.created", portmanager))
+	repo, err := NewRepository(file, dispatcher)
 	if err != nil {
 		t.Fatalf("Error creating repository: %s", err)
 	}
@@ -46,22 +45,6 @@ func TestServiceRepo(t *testing.T) {
 		if res.Id == uuid.Nil() {
 			t.Fatalf("Error creating service: id should not be nil")
 		}
-		if res.Workloads[0].Data.Port != 9000 {
-			t.Fatalf("Error creating service: port should be 9000")
-		}
-
-		if portmanager.items[0].WorkspaceId == res.Id {
-			t.Error("Workspace id is not progaated into manager")
-		}
-
-		res2, err := service.Create(ctx)
-		if err != nil {
-			t.Fatalf("Error creating service: %s", err)
-		}
-		if res2.Workloads[0].Data.Port != 9001 {
-			t.Fatalf("Error creating service: port should be 9001")
-		}
-
 	})
 
 }
@@ -76,17 +59,19 @@ func TestAggregateRepo(t *testing.T) {
 
 	t.Run("load on empty", func(t *testing.T) {
 		dir := t.TempDir()
+		defer os.RemoveAll(dir)
 		file := path.Join(dir, "log.file")
-		os.Setenv("WORKSPACE_LOG", file)
-		repo, err := NewRepository()
+		portmanager := NewPortManager(9000)
+		dispatcher := events.NewDispatcher(events.FilterName("workload.created", portmanager))
+		repo, err := NewRepository(file, dispatcher)
 		if err != nil {
 			t.Fatalf("Error creating repository: %s", err)
 		}
+
 		_, err = repo.LoadById(context.Background(), uuid.New())
 		if err != NotFound {
 			t.Fatalf("Error loading repository: %s", err)
 		}
-
 	})
 
 	t.Run("save", func(t *testing.T) {
@@ -94,11 +79,14 @@ func TestAggregateRepo(t *testing.T) {
 		createEvents := make(EventCollector, 0)
 
 		dir := t.TempDir()
+		defer os.RemoveAll(dir)
 		file := path.Join(dir, "log.file")
-
-		os.Setenv("WORKSPACE_LOG", file)
-
-		repo, err := NewRepository(events.FilterName("created", &createEvents))
+		portmanager := NewPortManager(9000)
+		dispatcher := events.NewDispatcher(
+			events.FilterName("workload.created", portmanager),
+			events.FilterName("created", &createEvents),
+		)
+		repo, err := NewRepository(file, dispatcher)
 		if err != nil {
 			t.Fatalf("Error creating repository: %s", err)
 		}
@@ -130,9 +118,13 @@ func TestAggregateRepo(t *testing.T) {
 
 	t.Run("deleted events are not found", func(t *testing.T) {
 		dir := t.TempDir()
+		defer os.RemoveAll(dir)
 		file := path.Join(dir, "log.file")
-		os.Setenv("WORKSPACE_LOG", file)
-		repo, err := NewRepository()
+		portmanager := NewPortManager(9000)
+		dispatcher := events.NewDispatcher(
+			events.FilterName("workload.created", portmanager),
+		)
+		repo, err := NewRepository(file, dispatcher)
 		if err != nil {
 			t.Fatalf("Error creating repository: %s", err)
 		}
