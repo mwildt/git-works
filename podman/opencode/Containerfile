@@ -1,7 +1,7 @@
 # Containerfile
 FROM docker.io/library/node:24-trixie
 
-RUN npm install -g opencode-ai
+RUN npm install -g @opencode/cli
 
 RUN mkdir -p /home/node/.local/share/opencode \
              /home/node/.local/state/opencode \

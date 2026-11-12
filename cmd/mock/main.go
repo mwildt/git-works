@@ -50,6 +50,7 @@ func main() {
 		workloadId := body.Variables["WORKLOAD_ID"]
 
 		opencodeFile := fmt.Sprintf("opencode.%s.json", workloadId)
+		vscodeFile := fmt.Sprintf("vscode.%s.json", workloadId)
 
 		if body.Variables["JOB"] == "OC_UP" {
 			args := []string{
@@ -77,6 +78,29 @@ func main() {
 			}
 		}
 
+		if body.Variables["JOB"] == "VSCODE_UP" {
+			args := []string{
+				"run", "-d", "--replace", "--rm",
+				"--name", body.Variables["NAME"],
+				"--user", "0:0",
+				"-e", "CODE_SERVER_PASSWORD=" + body.Variables["CODE_SERVER_PASSWORD"],
+				"-p", fmt.Sprintf("%s:8080", body.Variables["PORT"]),
+				"-v", fmt.Sprintf("./data/%s/workspace:/workspace", workspaceId),
+				"-v", fmt.Sprintf("./data/%s/%s:/workspace/config.json:ro", workspaceId, vscodeFile),
+				"git-works-vscode",
+			}
+
+			slog.Default().Info("run podman: ", "args", strings.Join(args, " "))
+
+			cmd := exec.Command("podman", args...)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+
+			if err := cmd.Run(); err != nil {
+				fmt.Fprintln(os.Stderr, "podman run failed:", err)
+			}
+		}
+
 		if body.Variables["JOB"] == "OC_STOP" {
 			args := []string{"stop", body.Variables["NAME"]}
 
@@ -91,7 +115,35 @@ func main() {
 			}
 		}
 
+		if body.Variables["JOB"] == "VSCODE_STOP" {
+			args := []string{"stop", body.Variables["NAME"]}
+
+			slog.Default().Info("run podman: ", "args", strings.Join(args, " "))
+
+			cmd := exec.Command("podman", args...)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+
+			if err := cmd.Run(); err != nil {
+				fmt.Fprintln(os.Stderr, "podman run failed:", err)
+			}
+		}
+
 		if body.Variables["JOB"] == "OC_RM" {
+			args := []string{"rm", "-f", body.Variables["NAME"]}
+
+			slog.Default().Info("run podman: ", "args", strings.Join(args, " "))
+
+			cmd := exec.Command("podman", args...)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+
+			if err := cmd.Run(); err != nil {
+				fmt.Fprintln(os.Stderr, "podman run failed:", err)
+			}
+		}
+
+		if body.Variables["JOB"] == "VSCODE_RM" {
 			args := []string{"rm", "-f", body.Variables["NAME"]}
 
 			slog.Default().Info("run podman: ", "args", strings.Join(args, " "))

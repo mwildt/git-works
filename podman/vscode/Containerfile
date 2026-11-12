@@ -1,0 +1,58 @@
+FROM codercom/code-server:latest
+
+# Install additional dependencies needed for the application
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    git \
+    ca-certificates \
+    openssh-client \
+    wget \
+    tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security
+RUN useradd -m -u 1001 -G users appuser
+
+# Create directories for the application
+RUN mkdir -p /app /data
+
+# Copy the built application binary (built from the main Dockerfile)
+COPY --from=builder --chown=appuser:appuser /app/git-workspace /app/git-workspace
+COPY --from=builder --chown=appuser:appuser /app/static /app/static
+
+# Copy git-askpass
+COPY --from=builder --chown=appuser:appuser /tmp/git-askpass /usr/local/bin/git-askpass
+RUN chmod +x /usr/local/bin/git-askpass
+
+# Set environment variables
+ENV GIT_ASKPASS=/usr/local/bin/git-askpass
+ENV PORT=8080
+ENV WORKSPACE_BASE_DIR=/data
+ENV STATIC_DIR=/app/static
+ENV CODE_SERVER_PASSWORD=change-me-in-production
+
+# Configure code-server
+RUN mkdir -p /home/appuser/.config/code-server && \
+    echo '{
+  "bind-addr": "0.0.0.0:8080",
+  "auth": "password",
+  "password": "'"$CODE_SERVER_PASSWORD"'",
+  "cert": false
+}' > /home/appuser/.config/code-server/config.json
+
+# Set permissions
+RUN chown -R appuser:appuser /home/appuser/.config /app /data
+
+# Switch to non-root user
+USER appuser
+WORKDIR /app
+
+# Expose port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+
+# Start both code-server and the application
+CMD ["sh", "-c", "/usr/bin/code-server --disable-telemetry & /app/git-workspace"]

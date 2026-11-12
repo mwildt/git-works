@@ -5,3 +5,8 @@ pgw-data/
 gw-data/
 sshtesting
 opencode.json
+
+# Environment files
+.env
+.env.*
+!.env.build
