@@ -12,6 +12,7 @@ const (
 	ProjectEventTypeDeleted          = "project.deleted"
 	OpencodeWorkloadEventTypeCreated = "opencode.created"
 	OpencodeWorkloadEventTypeDeleted = "opencode.deleted"
+	OpencodeWorkloadEventTypeIdle    = "opencode.idle"
 	SSHWorkloadEventTypeCreated      = "ssh.created"
 )
 
@@ -71,6 +72,16 @@ type OpencodeWorkloadDeleted struct {
 
 func (e OpencodeWorkloadDeleted) EventType() string {
 	return OpencodeWorkloadEventTypeDeleted
+}
+
+type OpencodeWorkloadIdle struct {
+	Id           uuid.UUID `json:"id"`
+	WorkspaceId  uuid.UUID `json:"workspace_id"`
+	LastActivity time.Time `json:"last_activity"`
+}
+
+func (e OpencodeWorkloadIdle) EventType() string {
+	return OpencodeWorkloadEventTypeIdle
 }
 
 type SSHWorkloadCreated struct {
