@@ -166,6 +166,10 @@ func (repo *Repository) Delete(ctx context.Context, workspaceId uuid.UUID) error
 	return repo.append(ctx, workspace.Id, event)
 }
 
+func (repo *Repository) Dispatch(ctx context.Context, aggregateId uuid.UUID, event events.DomainEvent) error {
+	return repo.append(ctx, aggregateId, event)
+}
+
 func (repo *Repository) ProjectById(ctx context.Context, workspaceId uuid.UUID, pid uuid.UUID) (_ *Workspace, _ Project, err error) {
 	if workspace, err := repo.LoadById(ctx, workspaceId); err != nil {
 		return nil, Project{}, err
@@ -238,6 +242,9 @@ func (repo *Repository) deserialize(record storage.OffsetRecord) (events.Envelop
 		},
 		OpencodeWorkloadEventTypeDeleted: func() DomainEvent {
 			return &OpencodeWorkloadDeleted{}
+		},
+		OpencodeWorkloadEventTypeIdle: func() DomainEvent {
+			return &OpencodeWorkloadIdle{}
 		},
 		SSHWorkloadEventTypeCreated: func() DomainEvent {
 			return &SSHWorkloadCreated{}

@@ -1,19 +1,16 @@
 package main
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"log/slog"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"path"
 	"strconv"
-	"strings"
 	"time"
 
 	"gtihub.com/mwildt/git-works/pkg/actions"
@@ -91,6 +88,22 @@ func main() {
 	}
 
 	workspaceService := workspaces.NewService(workspaceRepo, gitClient, opencodeActions, portmanager)
+
+	proxies := newProxyRegistry(
+		config.GetEnvDuration("WORKLOAD_IDLE_TIMEOUT", 30*time.Minute),
+		func(ctx context.Context, ref auth.WorkloadReference, lastActivity time.Time) {
+			err := workspaceRepo.Dispatch(ctx, ref.WorkspaceId, &workspaces.OpencodeWorkloadIdle{
+				Id:           ref.WorkloadId,
+				WorkspaceId:  ref.WorkspaceId,
+				LastActivity: lastActivity,
+			})
+			if err != nil {
+				slog.Default().Error("unable to dispatch workload idle event", "error", err, "workspace", ref.WorkspaceId, "workload", ref.WorkloadId)
+			} else {
+				slog.Default().Info("workload idle timeout reached", "workspace", ref.WorkspaceId, "workload", ref.WorkloadId, "lastActivity", lastActivity)
+			}
+		},
+	)
 
 	workspaceController, err := workspaces.NewController(workspaceRepo, workspaceService, sessionManager, workspaceView)
 
@@ -178,47 +191,7 @@ func main() {
 			http.Error(writer, "invalid workload target url", http.StatusBadGateway)
 			return
 		}
-		proxy := httputil.NewSingleHostReverseProxy(target)
-		proxy.FlushInterval = -1
-
-		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-			slog.Default().Error("proxy error", "method", r.Method, "path", r.URL.Path, "error", err)
-			http.Error(w, "workload unreachable", http.StatusBadGateway)
-		}
-
-		proxy.ModifyResponse = func(resp *http.Response) error {
-			contentType := resp.Header.Get("Content-Type")
-			if !strings.Contains(contentType, "text/html") {
-				return nil
-			}
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				resp.Body.Close()
-				return fmt.Errorf("read upstream body: %w", err)
-			}
-			resp.Body.Close()
-
-			const injectTag = "<script type=\"module\" crossorigin src=\"/.gw-mixin/index.js\" defer></script>"
-			lower := bytes.ToLower(body)
-			idx := bytes.LastIndex(lower, []byte("</body>"))
-			if idx == -1 {
-				resp.Body = io.NopCloser(bytes.NewReader(body))
-				resp.ContentLength = int64(len(body))
-				resp.Header.Set("Content-Length", fmt.Sprint(len(body)))
-				return nil
-			}
-			var out bytes.Buffer
-			out.Write(body[:idx])
-			out.WriteString(injectTag)
-			out.Write(body[idx:])
-
-			resp.Body = io.NopCloser(&out)
-			resp.ContentLength = int64(out.Len())
-			resp.Header.Set("Content-Length", fmt.Sprint(out.Len()))
-			return nil
-		}
-
-		proxy.ServeHTTP(writer, request)
+		proxies.For(target, session.ActiveWorkload).ServeHTTP(writer, request)
 		return
 	})
 
