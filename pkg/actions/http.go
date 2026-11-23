@@ -110,7 +110,7 @@ func (c *Client) Send(ctx context.Context, name string, vars map[string]string) 
 		if err != nil {
 			return nil, fmt.Errorf("header %s: %w", k, err)
 		}
-		slog.Default().Info("set header", k, v)
+		slog.Default().Info("set header", "name", k)
 		req.Header.Set(k, v)
 	}
 	if body != "" && req.Header.Get("Content-Type") == "" {

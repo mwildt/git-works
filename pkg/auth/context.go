@@ -2,8 +2,6 @@ package auth
 
 import (
 	"context"
-
-	"gtihub.com/mwildt/git-works/pkg/gitlab"
 )
 
 func Owner(ctx context.Context) (string, bool) {
@@ -12,14 +10,6 @@ func Owner(ctx context.Context) (string, bool) {
 		return session.(Session).Username, true
 	}
 	return "", false
-}
-
-func Token(ctx context.Context) (gitlab.Token, bool) {
-	session := ctx.Value("SESSION")
-	if session != nil {
-		return session.(Session).Token, true
-	}
-	return gitlab.Token{}, false
 }
 
 func WithSession(ctx context.Context, session Session) context.Context {

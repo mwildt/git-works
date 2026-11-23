@@ -72,10 +72,13 @@ func (c *collector) handle(envelop events.Envelope) error {
 	}
 	if _, ok := envelop.Event().(*WorkspaceDeleted); ok {
 		c.aggregate = nil
-		return nil
+		return nil // Return early to avoid calling apply on nil
 	}
 	if _, ok := envelop.Event().(*WorkspaceCreated); ok {
 		c.aggregate = &Workspace{}
+	}
+	if c.aggregate == nil {
+		return nil // Safety check: don't call apply on nil
 	}
 	c.aggregate.apply(envelop.Event())
 	return nil
@@ -145,7 +148,7 @@ func (repo *Repository) Save(ctx context.Context, workspace *Workspace) error {
 		return Forbidden
 	}
 	for _, event := range workspace.events {
-		if err := repo.append(ctx, workspace.Id, event); err != nil {
+		if err := repo.Append(ctx, workspace.Id, event); err != nil {
 			return err
 		}
 	}
@@ -158,12 +161,12 @@ func (repo *Repository) Delete(ctx context.Context, workspaceId uuid.UUID) error
 	if err != nil {
 		return err
 	}
-	event := WorkspaceDeleted{
+	event := &WorkspaceDeleted{
 		Owner: workspace.Owner,
 		Id:    workspace.Id,
 	}
 
-	return repo.append(ctx, workspace.Id, event)
+	return repo.Append(ctx, workspace.Id, event)
 }
 
 func (repo *Repository) ProjectById(ctx context.Context, workspaceId uuid.UUID, pid uuid.UUID) (_ *Workspace, _ Project, err error) {
@@ -198,7 +201,7 @@ func (repo *Repository) byId(ctx context.Context, workspaceId uuid.UUID) (worksp
 	}
 }
 
-func (repo *Repository) append(ctx context.Context, aggregateId uuid.UUID, event events.DomainEvent) error {
+func (repo *Repository) Append(ctx context.Context, aggregateId uuid.UUID, event events.DomainEvent) error {
 	if persistentEvent, err := repo.serialize(aggregateId, event); err != nil {
 		return err
 	} else if err = repo.write(persistentEvent); err != nil {
@@ -241,6 +244,15 @@ func (repo *Repository) deserialize(record storage.OffsetRecord) (events.Envelop
 		},
 		SSHWorkloadEventTypeCreated: func() DomainEvent {
 			return &SSHWorkloadCreated{}
+		},
+		"ssh.deleted": func() DomainEvent {
+			return &SSHWorkloadDeleted{}
+		},
+		VscodeWorkloadEventTypeCreated: func() DomainEvent {
+			return &VscodeWorkloadCreated{}
+		},
+		VscodeWorkloadEventTypeDeleted: func() DomainEvent {
+			return &VscodeWorkloadDeleted{}
 		},
 	}[persistentEvent.EventType]
 

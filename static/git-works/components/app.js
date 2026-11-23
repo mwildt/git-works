@@ -38,7 +38,7 @@ customElements.define('gw-page', class extends LitElement {
                     <action @click=${(e) => {
                         e.preventDefault();
                         router.go('/');
-                    }}><strong>Git.Works</strong></action>
+                    }}><strong>WhatTheGit.AI</strong></action>
                     <slot name="header"></slot>
                 </div>
             </header>
@@ -77,7 +77,7 @@ customElements.define('gw-app-main', class extends LitElement {
         console.warn("path ", this.path)
         switch (this.path) {
             case '/': return html`
-                <h1 class="page-title">Was geht App?</h1>
+                <h1 class="page-title">Hallo!</h1>
                 <p class="page-subtitle">Durchsuche deine Git-Projekte und erstelle <a
                         href="/static#/user/workspace" @click=${(e) => {
                     e.preventDefault();
@@ -159,6 +159,7 @@ customElements.define('gw-app', class extends LitElement {
         await this.checkSession();
         this.addEventListener('gw-login::success', () => {
             this.authenticated = true;
+            location.reload()
         });
     }
 
@@ -197,11 +198,23 @@ customElements.define('gw-app', class extends LitElement {
                             e.preventDefault();
                             router.go('/user/profile');
                         }}>Profil</action>
-    
+
+                        <action @click=${(e) => {
+                            e.preventDefault();
+                            this.logout();
+                        }}>Abmelden</action>
+                        
                     </div>
                     <gw-app-main slot></gw-app-main>
                 </gw-page>
             </gw-auth>
         `;
     }
+
+    async logout() {
+        const res = await fetch("/api/auth/logout")
+        history.replaceState(null, "", location.pathname + location.search);
+        location.reload()
+    }
+
 });

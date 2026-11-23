@@ -30,13 +30,17 @@ func (wi *WorkloadInitializer) Handle(ctx context.Context, envelope events.Envel
 				return err
 			}
 			host := config.GetEnv("OPENCODE_REMOTE_HOST", "127.0.0.1")
-			if err = workspace.CreateSshWorkload(host, wi.portManager); err != nil {
+			//if err = workspace.CreateSshWorkload(host, wi.portManager); err != nil {
+			//	return err
+			//} else
+			if err := workspace.CreateOpencodeWorkload(host, wi.portManager); err != nil {
 				return err
-			} else if err := workspace.CreateOpencodeWorkload(host, wi.portManager); err != nil {
+			} else if err := workspace.CreateVscodeWorkload(host, wi.portManager); err != nil {
 				return err
 			} else if err = wi.repo.Save(ctx, workspace); err != nil {
 				return err
 			}
+
 		}
 	}
 	return nil

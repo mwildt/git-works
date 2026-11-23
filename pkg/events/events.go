@@ -2,6 +2,8 @@ package events
 
 import (
 	"context"
+	"encoding/json"
+	"log/slog"
 	"time"
 	"uuid"
 )
@@ -51,6 +53,8 @@ func (d *Dispatcher) Dispatch(
 	ctx context.Context,
 	event Envelope,
 ) error {
+	e, _ := json.Marshal(event.Event())
+	slog.Default().Debug("dispatch event", "type", event.EventType(), "event", e)
 	for _, handler := range d.handlers {
 		if err := handler.Handle(ctx, event); err != nil {
 			return err

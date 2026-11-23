@@ -1,6 +1,6 @@
 requests:
   OPENCODE_WORKSPACE_HEALTH:
-    method: POST
+    method: GET
     url: "http://127.0.0.1:{{.port}}/"
     headers:
       Authorization: "{{.oc_authorization}}"
@@ -9,6 +9,7 @@ requests:
     url: "http://127.0.0.1:8999/api/v4/pipelines"
     headers:
       Content-Type: application/json
+      X-Custom: "{{.config_gitlab_token}}"
     body: |
       {
         "ref": "main",
@@ -66,6 +67,55 @@ requests:
         "ref": "main",
         "variables": {
           "JOB": "SSH_STOP",
+          "WORKSPACE_ID": "{{.workspaceId}}",
+          "WORKLOAD_ID": "{{.workloadId}}",
+          "NAME": "{{.name}}",
+          "PORT": "{{.port}}"
+        }
+      }
+  VSCODE_START:
+    method: POST
+    url: "http://127.0.0.1:8999/api/v4/pipelines"
+    headers:
+      Content-Type: application/json
+    body: |
+      {
+        "ref": "main",
+        "variables": {
+          "JOB": "VSCODE_UP",
+          "WORKSPACE_ID": "{{.workspaceId}}",
+          "WORKLOAD_ID": "{{.workloadId}}",
+          "NAME": "{{.name}}",
+          "PORT": "{{.port}}",
+          "CODE_SERVER_PASSWORD": "{{.vscode_password}}"
+        }
+      }
+  VSCODE_STOP:
+    method: POST
+    url: "http://127.0.0.1:8999/api/v4/pipelines"
+    headers:
+      Content-Type: application/json
+    body: |
+      {
+        "ref": "main",
+        "variables": {
+          "JOB": "VSCODE_STOP",
+          "WORKSPACE_ID": "{{.workspaceId}}",
+          "WORKLOAD_ID": "{{.workloadId}}",
+          "NAME": "{{.name}}",
+          "PORT": "{{.port}}"
+        }
+      }
+  VSCODE_REMOVE:
+    method: POST
+    url: "http://127.0.0.1:8999/api/v4/pipelines"
+    headers:
+      Content-Type: application/json
+    body: |
+      {
+        "ref": "main",
+        "variables": {
+          "JOB": "VSCODE_RM",
           "WORKSPACE_ID": "{{.workspaceId}}",
           "WORKLOAD_ID": "{{.workloadId}}",
           "NAME": "{{.name}}",
