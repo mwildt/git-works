@@ -1,0 +1,10 @@
+{
+  "extensions.allowed": {
+    "*": false
+  },
+  "workbench.editor.empty.hint": "hidden",
+  "git.enabled": false,
+  "git.autofetch": false,
+  "git.decorations.enabled": false,
+  "chat.disableAIFeatures": true
+}

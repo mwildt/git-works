@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -32,7 +33,6 @@ type (
 		Projects  []Project
 		Workloads []Workload
 		Created   time.Time
-		Opencode  OpencodeWorkloadConfiguration
 		events    []events2.DomainEvent
 	}
 
@@ -59,6 +59,13 @@ type (
 		Port         int
 	}
 
+	VscodeWorkloadConfiguration struct {
+		Key      string
+		Password string
+		Host     string
+		Port     int
+	}
+
 	Project struct {
 		Id     uuid.UUID `json:"id"`
 		Path   string    `json:"path,omitempty"`
@@ -66,6 +73,10 @@ type (
 		Branch string    `json:"branch,omitempty"`
 	}
 )
+
+func (c VscodeWorkloadConfiguration) TargetUrl() (*url.URL, error) {
+	return url.Parse(fmt.Sprintf("http://%s:%d", c.Host, c.Port))
+}
 
 func NewWorkspace(owner string) *Workspace {
 	id := uuid.New()
@@ -122,6 +133,14 @@ func (workload Workload) Status(opencodeActions *actions.Client) (string, error)
 		}
 		defer conn.Close()
 		return "up", nil
+	case VscodeWorkloadConfiguration:
+		address := net.JoinHostPort(config.Host, strconv.Itoa(config.Port))
+		conn, err := net.DialTimeout("tcp", address, 1*time.Second)
+		if err != nil {
+			return "down", nil
+		}
+		defer conn.Close()
+		return "up", nil
 	}
 	return "", errors.New("invalid workload type")
 }
@@ -138,10 +157,11 @@ func (workload Workload) Action(token gitlab.Token, actions *actions.Client, act
 	slog.Default().Info("Run workspace action", "action", action, "id", workload.Id.String(), "workspace", workspaceId.String())
 
 	parameter := map[string]string{
-		"workspaceId": workspaceId.String(),
-		"workloadId":  workload.Id.String(),
-		"token_type":  token.TokenType,
-		"token_value": token.Value,
+		"workspaceId":         workspaceId.String(),
+		"workloadId":          workload.Id.String(),
+		"token_type":          token.TokenType,
+		"token_value":         token.Value,
+		"config_gitlab_token": config.GetEnv("GITLAB_TOKEN", ""),
 	}
 
 	switch config := workload.Data.(type) {
@@ -157,6 +177,11 @@ func (workload Workload) Action(token gitlab.Token, actions *actions.Client, act
 		parameter["name"] = config.Key
 		parameter["host"] = config.Host
 		parameter["port"] = strconv.Itoa(config.Port)
+	case VscodeWorkloadConfiguration:
+		parameter["name"] = config.Key
+		parameter["host"] = config.Host
+		parameter["port"] = strconv.Itoa(config.Port)
+		parameter["vscode_password"] = config.Password
 	}
 
 	res, err := actions.Send(context.Background(), action, parameter)
@@ -189,6 +214,18 @@ func (workload Workload) Init(basedir string) error {
 
 	case SSHWorkloadConfiguration:
 		slog.Default().Info("init workload", "workloadid", workload.Id.String(), "basedir", basedir)
+	case VscodeWorkloadConfiguration:
+		source := config.GetEnv("VSCODE_TEMPLATE_FILE", "vscode.json")
+		slog.Default().Info("init workload", "workloadid", workload.Id.String(), "basedir", basedir, "config-source", source)
+		vscodeConfig, err := os.ReadFile(source)
+		if err != nil {
+			return err
+		}
+		vscodeFile := path.Join(basedir, fmt.Sprintf("vscode.%s.json", workload.Id.String()))
+		if err := os.WriteFile(vscodeFile, vscodeConfig, 0644); err != nil {
+			slog.Default().Error("Error creating vscode file", "error", err)
+			return err
+		}
 	}
 
 	return nil
@@ -239,6 +276,27 @@ func (workspace *Workspace) deleteProjectById(value uuid.UUID) bool {
 }
 
 func (workspace *Workspace) deleteWorkloadById(value uuid.UUID) bool {
+	// Find the workload to determine its type
+	for _, workload := range workspace.Workloads {
+		if workload.Id == value {
+			var event events2.DomainEvent
+			switch workload.Type {
+			case "OpenCode":
+				event = &OpencodeWorkloadDeleted{Id: value}
+			case "VSCode":
+				event = &VscodeWorkloadDeleted{Id: value}
+			case "SSH":
+				event = &SSHWorkloadDeleted{Id: value}
+			default:
+				// Default to opencode for backwards compatibility
+				event = &OpencodeWorkloadDeleted{Id: value}
+			}
+			workspace.apply(event)
+			workspace.events = append(workspace.events, event)
+			return true
+		}
+	}
+	// If workload not found, default to opencode for backwards compatibility
 	event := &OpencodeWorkloadDeleted{Id: value}
 	workspace.apply(event)
 	workspace.events = append(workspace.events, event)
@@ -339,15 +397,39 @@ func (workspace *Workspace) apply(event any) {
 		workspace.Workloads = append(workspace.Workloads, Workload{
 			Id:          e.Id,
 			WorkspaceId: workspace.Id,
-			Type:        "SSH",
-			Data: SSHWorkloadConfiguration{
-				Key:  e.Key,
-				Host: e.Host,
-				Port: e.Port,
-			},
+			Type:        e.Type,
+			Data:        e.Data,
 			StartAction: "SSH_START",
 			StopAction:  "SSH_STOP",
 		})
+
+	case *SSHWorkloadDeleted:
+		workloads := make([]Workload, 0, len(workspace.Workloads))
+		for _, workload := range workspace.Workloads {
+			if workload.Id != e.Id {
+				workloads = append(workloads, workload)
+			}
+		}
+		workspace.Workloads = workloads
+
+	case *VscodeWorkloadCreated:
+		workspace.Workloads = append(workspace.Workloads, Workload{
+			Id:          e.Id,
+			WorkspaceId: workspace.Id,
+			Type:        e.Type,
+			Data:        e.Data,
+			StartAction: "VSCODE_START",
+			StopAction:  "VSCODE_STOP",
+		})
+
+	case *VscodeWorkloadDeleted:
+		workloads := make([]Workload, 0, len(workspace.Workloads))
+		for _, workload := range workspace.Workloads {
+			if workload.Id != e.Id {
+				workloads = append(workloads, workload)
+			}
+		}
+		workspace.Workloads = workloads
 	}
 }
 
@@ -368,7 +450,7 @@ func (workspace *Workspace) CreateOpencodeWorkload(host string, portManager *Por
 		Type:        "OpenCode",
 		Data: OpencodeWorkloadConfiguration{
 			Key:          "workspaces_opencode_" + id.String()[0:10],
-			AuthUsername: "git-works",
+			AuthUsername: "opencode",
 			AuthPassword: "password",
 			Host:         host,
 			Port:         port,
@@ -390,14 +472,41 @@ func (workspace *Workspace) CreateSshWorkload(host string, portManager *PortMana
 	event := &SSHWorkloadCreated{
 		Id:          id,
 		WorkspaceId: workspace.Id,
-		Port:        port,
-		Host:        host,
-		Key:         "workspaces_ssh_" + id.String()[0:10],
+		Type:        "SSH",
+		Data: SSHWorkloadConfiguration{
+			Key:  "workspaces_ssh_" + id.String()[0:10],
+			Host: host,
+			Port: port,
+		},
 	}
 	workspace.apply(event)
 	workspace.events = append(workspace.events, event)
 	return nil
 
+}
+
+func (workspace *Workspace) CreateVscodeWorkload(host string, portManager *PortManager) error {
+	id := uuid.New()
+
+	port, err := portManager.Reserve(id, host)
+	if err != nil {
+		return err
+	}
+
+	event := &VscodeWorkloadCreated{
+		Id:          id,
+		WorkspaceId: workspace.Id,
+		Type:        "VSCode",
+		Data: VscodeWorkloadConfiguration{
+			Key:      "workspaces_vscode_" + id.String()[0:10],
+			Password: "change-me-in-production",
+			Host:     host,
+			Port:     port,
+		},
+	}
+	workspace.apply(event)
+	workspace.events = append(workspace.events, event)
+	return nil
 }
 
 func IsSubPath(parent, child string) bool {

@@ -1,6 +1,6 @@
 requests:
   OPENCODE_WORKSPACE_HEALTH:
-    method: POST
+    method: GET
     url: "http://127.0.0.1:{{.port}}/"
     headers:
       Authorization: "{{.oc_authorization}}"
@@ -9,6 +9,7 @@ requests:
     url: "http://127.0.0.1:8999/api/v4/pipelines"
     headers:
       Content-Type: application/json
+      X-Custom: "{{.config_gitlab_token}}"
     body: |
       {
         "ref": "main",

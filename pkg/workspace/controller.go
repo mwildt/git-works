@@ -3,8 +3,11 @@ package workspace
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"log/slog"
 	"net/http"
+	"net/http/httputil"
 	"strings"
 	"time"
 	"uuid"
@@ -37,31 +40,33 @@ func NewController(repo *Repository, service *Service, sessionManager *auth.Mana
 	}, nil
 }
 
-func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
+func (ctrl *Controller) getWorksspace(w http.ResponseWriter, r *http.Request) {
+	owner, ok := auth.Owner(r.Context())
+	if !ok {
+		slog.Default().Warn("no owner")
+		sendErrorMessage(w, http.StatusBadRequest, "no owner")
+		return
+	}
+	workspaces := ctrl.workspaceView.ByOwner(owner)
+	sendJson(w, http.StatusOK, workspaces)
+}
+
+func (ctrl *Controller) SetUp(api *http.ServeMux) error {
 
 	service := ctrl.service
 
-	api.HandleFunc("GET /api/workspace", func(w http.ResponseWriter, r *http.Request) {
-		owner, ok := auth.Owner(r.Context())
-		if !ok {
-			slog.Default().Warn("no owner")
-			sendErrorMessage(w, http.StatusBadRequest, "no owner")
-			return
-		}
-		workspaces := ctrl.workspaceView.ByOwner(owner)
-		sendJson(w, http.StatusOK, workspaces)
-	})
+	api.HandleFunc("GET /api/workspace", ctrl.sessionManager.Authenticated(http.HandlerFunc(ctrl.getWorksspace)))
 
-	api.HandleFunc("POST /api/workspace", func(w http.ResponseWriter, r *http.Request) {
+	api.HandleFunc("POST /api/workspace", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		workspace, err := service.Create(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		sendJson(w, http.StatusCreated, ToWorkspaceResponse(workspace))
-	})
+	})))
 
-	api.HandleFunc("GET /api/workspace/{workspaceId}", func(w http.ResponseWriter, r *http.Request) {
+	api.HandleFunc("GET /api/workspace/{workspaceId}", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		workspaceId, err := uuid.Parse(r.PathValue("workspaceId"))
 		if err != nil {
 			slog.Default().Warn("invalid ws id")
@@ -76,9 +81,9 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			return
 		}
 		sendJson(w, http.StatusOK, ToWorkspaceResponse(workspace))
-	})
+	})))
 
-	api.HandleFunc("DELETE /api/workspace/{workspaceId}", func(w http.ResponseWriter, r *http.Request) {
+	api.HandleFunc("DELETE /api/workspace/{workspaceId}", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		workspaceId, err := uuid.Parse(r.PathValue("workspaceId"))
 		if err != nil {
 			slog.Default().Warn("invalid ws id")
@@ -92,9 +97,9 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 		}
 
 		w.WriteHeader(http.StatusAccepted)
-	})
+	})))
 
-	api.HandleFunc("POST /api/workspace/{workspaceId}/init", func(writer http.ResponseWriter, request *http.Request) {
+	api.HandleFunc("POST /api/workspace/{workspaceId}/init", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		workspaceId, err := uuid.Parse(request.PathValue("workspaceId"))
 		if err != nil {
 			http.Error(writer, "invalid ws id", http.StatusBadRequest)
@@ -112,9 +117,9 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			return
 		}
 		writer.WriteHeader(http.StatusAccepted)
-	})
+	})))
 
-	api.HandleFunc("POST /api/workspace/{workspaceId}/project", func(writer http.ResponseWriter, request *http.Request) {
+	api.HandleFunc("POST /api/workspace/{workspaceId}/project", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		var project struct {
 			Path    string `json:"path"`
 			Project struct {
@@ -153,9 +158,9 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 		}
 
 		writer.WriteHeader(http.StatusCreated)
-	})
+	})))
 
-	api.HandleFunc("DELETE /api/workspace/{workspaceId}/project/{projectId}", func(writer http.ResponseWriter, request *http.Request) {
+	api.HandleFunc("DELETE /api/workspace/{workspaceId}/project/{projectId}", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		workspaceId, err := uuid.Parse(request.PathValue("workspaceId"))
 		if err != nil {
 			sendError(writer, err)
@@ -173,9 +178,9 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			return
 		}
 		writer.WriteHeader(http.StatusAccepted)
-	})
+	})))
 
-	api.HandleFunc("GET /api/workspace/{workspaceId}/project/{projectId}/status", func(writer http.ResponseWriter, request *http.Request) {
+	api.HandleFunc("GET /api/workspace/{workspaceId}/project/{projectId}/status", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		workspaceId, err := uuid.Parse(request.PathValue("workspaceId"))
 		if err != nil {
 			slog.Default().Warn("invalid ws id")
@@ -201,9 +206,9 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			return
 		}
 		sendJson(writer, http.StatusOK, status)
-	})
+	})))
 
-	api.HandleFunc("POST /api/workspace/{workspaceId}/project/{projectId}/init", func(writer http.ResponseWriter, request *http.Request) {
+	api.HandleFunc("POST /api/workspace/{workspaceId}/project/{projectId}/init", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		workspaceId, err := uuid.Parse(request.PathValue("workspaceId"))
 		if err != nil {
 			slog.Default().Warn("invalid ws id")
@@ -228,9 +233,9 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			return
 		}
 		writer.WriteHeader(http.StatusAccepted)
-	})
+	})))
 
-	api.HandleFunc("POST /api/workspace/{workspaceId}/project/{projectId}/commit", func(writer http.ResponseWriter, request *http.Request) {
+	api.HandleFunc("POST /api/workspace/{workspaceId}/project/{projectId}/commit", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		workspaceId, err := uuid.Parse(request.PathValue("workspaceId"))
 		if err != nil {
 			http.Error(writer, "invalid ws id", http.StatusBadRequest)
@@ -257,9 +262,9 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			return
 		}
 		writer.WriteHeader(http.StatusAccepted)
-	})
+	})))
 
-	api.HandleFunc("POST /api/workspace/{workspaceId}/project/{projectId}/push", func(writer http.ResponseWriter, request *http.Request) {
+	api.HandleFunc("POST /api/workspace/{workspaceId}/project/{projectId}/push", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		workspaceId, err := uuid.Parse(request.PathValue("workspaceId"))
 		if err != nil {
 			http.Error(writer, "invalid ws id", http.StatusBadRequest)
@@ -282,9 +287,9 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			return
 		}
 		writer.WriteHeader(http.StatusAccepted)
-	})
+	})))
 
-	api.HandleFunc("GET /api/workspace/{workspaceId}/workload/{workloadId}/status", func(writer http.ResponseWriter, request *http.Request) {
+	api.HandleFunc("GET /api/workspace/{workspaceId}/workload/{workloadId}/status", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		workspaceId, err := uuid.Parse(request.PathValue("workspaceId"))
 		if err != nil {
 			slog.Default().Warn("invalid ws id")
@@ -319,9 +324,9 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			})
 		}
 
-	})
+	})))
 
-	api.HandleFunc("POST /api/workspace/{workspaceId}/workload/{workloadId}/init", func(writer http.ResponseWriter, request *http.Request) {
+	api.HandleFunc("POST /api/workspace/{workspaceId}/workload/{workloadId}/init", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		workspaceId, err := uuid.Parse(request.PathValue("workspaceId"))
 		if err != nil {
 			slog.Default().Warn("invalid ws id")
@@ -344,9 +349,9 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			return
 		}
 		writer.WriteHeader(http.StatusAccepted)
-	})
+	})))
 
-	api.HandleFunc("POST /api/workspace/{workspaceId}/workload/{workloadId}/run", func(writer http.ResponseWriter, request *http.Request) {
+	api.HandleFunc("POST /api/workspace/{workspaceId}/workload/{workloadId}/run", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		workspaceId, err := uuid.Parse(request.PathValue("workspaceId"))
 		if err != nil {
 			slog.Default().Warn("invalid ws id")
@@ -369,9 +374,9 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			return
 		}
 		writer.WriteHeader(http.StatusAccepted)
-	})
+	})))
 
-	api.HandleFunc("POST /api/workspace/{workspaceId}/workload/{workloadId}/stop", func(writer http.ResponseWriter, request *http.Request) {
+	api.HandleFunc("POST /api/workspace/{workspaceId}/workload/{workloadId}/stop", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		workspaceId, err := uuid.Parse(request.PathValue("workspaceId"))
 		if err != nil {
 			slog.Default().Warn("invalid ws id")
@@ -394,10 +399,9 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			return
 		}
 		writer.WriteHeader(http.StatusAccepted)
+	})))
 
-	})
-
-	api.HandleFunc("POST /api/workspace/{workspaceId}/workload/{workloadId}/activate", func(writer http.ResponseWriter, request *http.Request) {
+	api.HandleFunc("POST /api/workspace/{workspaceId}/workload/{workloadId}/activate", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		workspaceId, err := uuid.Parse(request.PathValue("workspaceId"))
 		if err != nil {
 			http.Error(writer, "invalid workspaceId", http.StatusBadRequest)
@@ -446,7 +450,112 @@ func (ctrl *Controller) SetUpApi(api *http.ServeMux) error {
 			return
 		}
 		writer.WriteHeader(http.StatusAccepted)
-	})
+	})))
+
+	api.HandleFunc("POST /api/workspace/{workspaceId}/vscode", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		workspaceId, err := uuid.Parse(request.PathValue("workspaceId"))
+		if err != nil {
+			http.Error(writer, "invalid workspaceId", http.StatusBadRequest)
+			return
+		}
+
+		workspace, err := ctrl.repo.LoadById(request.Context(), workspaceId)
+		if err != nil {
+			sendError(writer, err)
+			return
+		}
+
+		if err := ctrl.service.CreateVscodeWorkload(request.Context(), workspace); err != nil {
+			sendError(writer, err)
+			return
+		}
+
+		writer.WriteHeader(http.StatusCreated)
+	})))
+
+	api.HandleFunc("GET /api/workspace/{workspaceId}/vscode", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		workspaceId, err := uuid.Parse(request.PathValue("workspaceId"))
+		if err != nil {
+			http.Error(writer, "invalid workspaceId", http.StatusBadRequest)
+			return
+		}
+
+		workspace, err := ctrl.repo.LoadById(request.Context(), workspaceId)
+		if err != nil {
+			sendError(writer, err)
+			return
+		}
+
+		// Find the VSCode workload
+		var vscodeWorkload *Workload
+		var vscodeConfig *VscodeWorkloadConfiguration
+		for _, workload := range workspace.Workloads {
+			if workload.Type == "VSCode" {
+				vscodeWorkload = &workload
+				if config, ok := workload.Data.(VscodeWorkloadConfiguration); ok {
+					vscodeConfig = &config
+				}
+				break
+			}
+		}
+
+		if vscodeWorkload == nil || vscodeConfig == nil {
+			http.Error(writer, "VSCode workload not found", http.StatusNotFound)
+			return
+		}
+
+		sendJson(writer, http.StatusOK, VscodeWorkloadResponse{
+			Id:       vscodeWorkload.Id,
+			Type:     "VSCode",
+			Host:     vscodeConfig.Host,
+			Port:     vscodeConfig.Port,
+			Password: "", // Don't return password in response
+		})
+	})))
+
+	//	/-/workspace/a8c2acad-da80-4c60-a024-405519f614e1/workload/073dfe10-e97c-4d35-9d22-10e45854f56b/vscode/
+
+	api.HandleFunc("/-/workspace/{workspaceId}/workload/{workloadId}/vscode/", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		workspaceId, err := uuid.Parse(request.PathValue("workspaceId"))
+		if err != nil {
+			http.Error(writer, "invalid workspaceId", http.StatusBadRequest)
+			return
+		}
+
+		workloadId, err := uuid.Parse(request.PathValue("workloadId"))
+		if err != nil {
+			http.Error(writer, "invalid workloadId", http.StatusBadRequest)
+			return
+		}
+
+		_, workload, err := ctrl.repo.WorkloadById(request.Context(), workspaceId, workloadId)
+		if err != nil {
+			http.Error(writer, "invalid workloadId", http.StatusBadRequest)
+			return
+		}
+
+		prefix := fmt.Sprintf(
+			"/-/workspace/%s/workload/%s/vscode",
+			workspaceId.String(),
+			workloadId.String(),
+		)
+
+		if config, ok := workload.Data.(VscodeWorkloadConfiguration); !ok {
+			http.Error(writer, "invalid workloadId", http.StatusBadRequest)
+			return
+		} else if url, err := config.TargetUrl(); err != nil {
+			http.Error(writer, "invalid workloadId", http.StatusBadRequest)
+			return
+		} else {
+			log.Printf("WS request: %s", request.URL.String())
+			log.Printf("Upgrade: %s", request.Header.Get("Upgrade"))
+			log.Printf("Prefix: %s", prefix)
+			log.Printf("Target: %s", url.String())
+			proxy := httputil.NewSingleHostReverseProxy(url)
+			http.StripPrefix(prefix, proxy).ServeHTTP(writer, request)
+		}
+	})))
+
 	return nil
 }
 
@@ -475,6 +584,16 @@ type WorkloadResponse struct {
 	Id   uuid.UUID `json:"id"`
 	Name string    `json:"name"`
 	Type string    `json:"type"`
+	Host string    `json:"host,omitempty"`
+	Port int       `json:"port,omitempty"`
+}
+
+type VscodeWorkloadResponse struct {
+	Id       uuid.UUID `json:"id"`
+	Type     string    `json:"type"`
+	Host     string    `json:"host"`
+	Port     int       `json:"port"`
+	Password string    `json:"password,omitempty"`
 }
 
 type ProjectResponse struct {

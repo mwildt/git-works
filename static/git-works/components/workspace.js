@@ -174,6 +174,33 @@ customElements.define('gw-workspace-workload', class extends LitElement {
         this.loadStatus();
     }
 
+    renderActions(workload, status) {
+        if (!workload) {
+            return
+        }
+        const statusKey = status ? status.status : undefined
+        return html`
+            <gw-button @click=${() => this.loadStatus()}>Status</gw-button>
+            <gw-button @click=${() => this.init()}>Init</gw-button>
+
+            ${statusKey === "up" 
+                    ? html`<gw-button danger @click=${() => this.stop()}>Stop</gw-button>`
+                    : undefined}
+            
+            ${workload.type === "OpenCode" && statusKey === "up"
+                ? html`<gw-button primary @click=${() => this.activate()}>Activate</gw-button>`
+                : undefined}
+
+            ${workload.type === "VSCode" && statusKey === "up"
+                    ? html`<gw-button primary @click=${() => this.open()}>Open</gw-button>`
+                    : undefined}
+            
+            ${statusKey == "down"
+                ? html`<gw-button @click=${() => this.run()}>Start</gw-button>`
+                : undefined}
+        `
+    }
+
     render() {
         return html`
             <h4>${this.workload.name}</h4>
@@ -185,17 +212,7 @@ customElements.define('gw-workspace-workload', class extends LitElement {
                                 ? html`<gw-badge warn>Down</gw-badge>`
                                 : html`<gw-badge error>Unknown</gw-badge>`}\`
                 <div slot="actions">
-                    <gw-button @click=${() => this.loadStatus()}>Status</gw-button>
-                    <gw-button @click=${() => this.init()}>Init</gw-button>
-                    ${this.status && this.status.status == "up" 
-                            ? html`
-                                <gw-button primary @click=${() => this.activate()}>Activate</gw-button>
-                                <gw-button danger @click=${() => this.stop()}>Stop</gw-button>
-                            `
-                            : undefined}
-                    ${this.status && this.status.status == "down"
-                            ? html`<gw-button @click=${() => this.run()}>Start</gw-button>`
-                            : undefined}
+                    ${this.renderActions(this.workload, this.status)}
                 </div>
             </gw-row-footer>
         `
@@ -213,6 +230,7 @@ customElements.define('gw-workspace-workload', class extends LitElement {
         }
         this.status = await response.json();
     }
+
     async remove() {
         const response = await fetch(`/api/workspace/${this.workspaceId}/workload/${this.workload.id}`, {
             method: "DELETE"
@@ -245,6 +263,7 @@ customElements.define('gw-workspace-workload', class extends LitElement {
         }));
         this.loadStatus();
     }
+
     async stop() {
         const response = await fetch(`/api/workspace/${this.workspaceId}/workload/${this.workload.id}/stop`, {
             method: "POST"
@@ -277,12 +296,17 @@ customElements.define('gw-workspace-workload', class extends LitElement {
         location.reload()
     }
 
+
+    async open() {
+        window.open(`/-/workspace/${this.workspaceId}/workload/${this.workload.id}/vscode/`, '_blank', 'noopener,noreferrer');
+    }
+
     async init() {
         const response = await fetch(`/api/workspace/${this.workspaceId}/workload/${this.workload.id}/init`, {
             method: "POST"
         });
         if (!response.ok) {
-            alert('Entfernen fehlgeschlagen')
+            alert('Initialisierung fehlgeschlagen')
             throw new Error(`HTTP ${response.status}`);
         }
 

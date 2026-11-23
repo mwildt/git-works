@@ -13,6 +13,8 @@ const (
 	OpencodeWorkloadEventTypeCreated = "opencode.created"
 	OpencodeWorkloadEventTypeDeleted = "opencode.deleted"
 	SSHWorkloadEventTypeCreated      = "ssh.created"
+	VscodeWorkloadEventTypeCreated   = "vscode.created"
+	VscodeWorkloadEventTypeDeleted   = "vscode.deleted"
 )
 
 type WorkspaceCreated struct {
@@ -74,13 +76,40 @@ func (e OpencodeWorkloadDeleted) EventType() string {
 }
 
 type SSHWorkloadCreated struct {
-	Id          uuid.UUID `json:"id"`
-	WorkspaceId uuid.UUID `json:"workspace_id"`
-	Host        string    `json:"host"`
-	Port        int       `json:"port"`
-	Key         string    `json:"key"`
+	Id          uuid.UUID                `json:"id"`
+	WorkspaceId uuid.UUID                `json:"workspace_id"`
+	Type        string                   `json:"type"`
+	Data        SSHWorkloadConfiguration `json:"data"`
 }
 
 func (e SSHWorkloadCreated) EventType() string {
 	return SSHWorkloadEventTypeCreated
+}
+
+// Add SSHWorkloadDeleted event for consistency
+type SSHWorkloadDeleted struct {
+	Id uuid.UUID `json:"id"`
+}
+
+func (e SSHWorkloadDeleted) EventType() string {
+	return "ssh.deleted"
+}
+
+type VscodeWorkloadCreated struct {
+	Id          uuid.UUID                      `json:"id"`
+	WorkspaceId uuid.UUID                      `json:"workspace_id"`
+	Type        string                         `json:"type"`
+	Data        VscodeWorkloadConfiguration   `json:"data"`
+}
+
+func (e VscodeWorkloadCreated) EventType() string {
+	return VscodeWorkloadEventTypeCreated
+}
+
+type VscodeWorkloadDeleted struct {
+	Id uuid.UUID `json:"id"`
+}
+
+func (e VscodeWorkloadDeleted) EventType() string {
+	return VscodeWorkloadEventTypeDeleted
 }

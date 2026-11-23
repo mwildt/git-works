@@ -1,8 +1,22 @@
-# Containerfile
 FROM docker.io/library/node:24-trixie
 
 RUN npm install -g @opencode/cli
 
+# Globaler Git-Hook
+RUN mkdir -p /etc/git-hooks \
+    && printf '%s\n' \
+       '#!/bin/sh' \
+       'grep -qi "^Co-authored-by: OpenCode <" "$1" && exit 0' \
+       'printf "\nCo-authored-by: OpenCode <opencode@opencode.opencode>\n" >> "$1"' \
+       > /etc/git-hooks/prepare-commit-msg \
+    && chmod +x /etc/git-hooks/prepare-commit-msg
+
+# Git-Konfiguration per ENV
+ENV GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0=core.hooksPath \
+    GIT_CONFIG_VALUE_0=/etc/git-hooks
+
+# OpenCode-Verzeichnisse
 RUN mkdir -p /home/node/.local/share/opencode \
              /home/node/.local/state/opencode \
              /home/node/.cache/opencode \

@@ -1,6 +1,7 @@
 package gitlab
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,7 +10,11 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+
+	"gtihub.com/mwildt/git-works/pkg/auth"
 )
+
+const TokenKey = "GITAB-TOKEN"
 
 type (
 	Token struct {
@@ -55,6 +60,14 @@ type (
 		NextPage int       `json:"next_page"`
 	}
 )
+
+func ReadToken(ctx context.Context) (Token, bool) {
+	if session, ok := auth.ReadSession(ctx); ok {
+		token := session.Value(TokenKey).(Token)
+		return token, true
+	}
+	return Token{}, false
+}
 
 func NewClient(baseUrl string) *Client {
 	return &Client{

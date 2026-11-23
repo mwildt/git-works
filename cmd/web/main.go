@@ -1,18 +1,20 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
 	"path"
-	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +36,7 @@ type configuration struct {
 }
 
 func main() {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 
 	appConfig := &configuration{
 		Host: config.GetEnv("SERVER_ADDRESS", "0.0.0.0:8080"),
@@ -43,6 +46,9 @@ func main() {
 	appConfig.UseTLS = appConfig.TLSCert != "" && appConfig.TLSKey != ""
 
 	opencodeActions, err := actions.NewHttpActions(config.GetEnv("GITLAB_ACTIONS_FILE", "gitlab-http-actions.yml"))
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	slog.Info("startup-info",
 		"SERVER_ADDRESS", os.Getenv("SERVER_ADDRESS"),
@@ -53,78 +59,61 @@ func main() {
 		"OPENCODE_REMOTE_HOST", os.Getenv("OPENCODE_REMOTE_HOST"),
 	)
 
-	if err != nil {
-		log.Fatal(err)
-	}
+	sessionManager := auth.NewSessionManager()
 
-	gitlabClient := gitlab.NewClient(config.GetEnv("GITLAB_BASE_URL", "https://gitlab.com"))
-	sessionManager := auth.NewSessionManager(gitlabClient)
-	//workspaceManager, err := workspaces.NewManager()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	gitClient := git.NewGit()
-
-	handler := http.NewServeMux()
-
-	opencode := http.NewServeMux()
+	rootHandler := http.NewServeMux()
+	opencodeHandler := http.NewServeMux()
 
 	dispatcher := events.NewDispatcher()
-
-	workspaceRepo, err := workspaces.NewRepository(
-		config.GetEnv("WORKSPACE_LOG", "./data/workspace.v2.log"),
-		dispatcher,
-	)
+	gitClient := git.NewGit()
 
 	portmanager := workspaces.NewPortManager(config.GetEnvInt("WORKSPACE_START_PORT", 9000))
 	dispatcher.RegisterFunc(portmanager.Handle)
 
-	workspaceView := workspaces.NewUserWorkspacesView()
-	dispatcher.RegisterFunc(workspaceView.Handle)
+	auth.NewController(sessionManager).SetUp(rootHandler)
 
-	workspaceInit := workspaces.NewWorkloadInitializer(workspaceRepo, portmanager)
-	dispatcher.RegisterFunc(workspaceInit.Handle)
+	// **********************************************************+
+	// Gitlab Init
+	// **********************************************************+
+	gitlabClient := gitlab.NewClient(config.GetEnv("GITLAB_BASE_URL", "https://gitlab.com"))
+	gitlab.NewController(gitlabClient, sessionManager).SetUp(rootHandler)
 
-	if err != nil {
-		log.Fatal(err)
-	}
+	// **********************************************************+
+	// Workspace Init
+	// **********************************************************+
+	workspaceRepo := func() *workspaces.Repository {
+		logFile := config.GetEnv("WORKSPACE_LOG", "./data/workspace.v2.log")
 
-	workspaceService := workspaces.NewService(workspaceRepo, gitClient, opencodeActions, portmanager)
+		workspaceRepo, err := workspaces.NewRepository(logFile, dispatcher)
+		if err != nil {
+			log.Fatal(err)
+		}
 
-	workspaceController, err := workspaces.NewController(workspaceRepo, workspaceService, sessionManager, workspaceView)
+		workspaceView := workspaces.NewUserWorkspacesView()
+		dispatcher.RegisterFunc(workspaceView.Handle)
 
-	// und jetzt das Replay Aller Events starten
+		workspaceInit := workspaces.NewWorkloadInitializer(workspaceRepo, portmanager)
+		dispatcher.RegisterFunc(workspaceInit.Handle)
+
+		workspaceService := workspaces.NewService(workspaceRepo, gitClient, opencodeActions, portmanager)
+		if workspaceController, err := workspaces.NewController(workspaceRepo, workspaceService, sessionManager, workspaceView); err != nil {
+			log.Fatal(err)
+		} else {
+			workspaceController.SetUp(rootHandler)
+		}
+
+		return workspaceRepo
+	}()
+
+	// **********************************************************+
+	// und jetzt das Replay ALLER Events starten
+	// **********************************************************+
 	if err = workspaceRepo.Replay(); err != nil {
 		log.Fatal(err)
 	}
 
-	api := http.NewServeMux()
-
-	workspaceController.SetUpApi(api)
-
-	authenticated := func(handler http.Handler) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-
-			cookie, err := r.Cookie("gw_session")
-			if err != nil {
-				slog.Default().Warn("cookie not found")
-				http.Error(w, "invalid cookie", http.StatusUnauthorized)
-				return
-			}
-			session, err := sessionManager.Validate(cookie.Value)
-			if err != nil {
-				slog.Default().Warn("session is invalid")
-				http.Error(w, "invalid cookie", http.StatusUnauthorized)
-				return
-			}
-			r = r.WithContext(auth.WithSession(r.Context(), session))
-			handler.ServeHTTP(w, r)
-		}
-	}
-
-	opencode.HandleFunc("PATCH /.git-works/session-mode", func(writer http.ResponseWriter, request *http.Request) {
-		cookie, err := request.Cookie("gw_session")
+	opencodeHandler.HandleFunc("PATCH /.git-works/session-mode", func(writer http.ResponseWriter, request *http.Request) {
+		cookie, err := request.Cookie(auth.SessionCookieName)
 		if err != nil {
 			slog.Default().Warn("cookie not found")
 			http.Error(writer, "invalid cookie", http.StatusUnauthorized)
@@ -150,9 +139,14 @@ func main() {
 
 	})
 
-	opencode.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
+	staticFS := http.Dir("./static/opencode/")
+	staticServer := http.FileServer(staticFS)
+
+	opencodeHandler.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 
 		session, ok := auth.ReadSession(request.Context())
+
+		slog.Debug("proxy request", "PATH", request.URL.Path)
 
 		if !ok {
 			http.Error(writer, "not found", http.StatusForbidden)
@@ -171,119 +165,91 @@ func main() {
 			http.Error(writer, "not found", http.StatusBadRequest)
 		}
 
-		request.Header.Set("Authorization", fmt.Sprintf("Basic %s", config.BasicAuth()))
+		// Zuerst lokale Dateien prüfen
+		path := request.URL.Path
+
+		if path != "/" && request.Method == "GET" {
+
+			file, err := staticFS.Open(path)
+			if err == nil {
+
+				info, statErr := file.Stat()
+				file.Close()
+
+				if statErr == nil && !info.IsDir() {
+					slog.Default().Debug("serve file from static ressource", "path", path)
+					writer.Header().Set("Cache-Control", "no-store")
+					staticServer.ServeHTTP(writer, request)
+					return
+				}
+			}
+		}
+
 		target, err := url.Parse(config.TargetUrl())
 		if err != nil {
 			slog.Default().Warn("invalid workload target url", "error", err)
 			http.Error(writer, "invalid workload target url", http.StatusBadGateway)
 			return
 		}
-		proxy := httputil.NewSingleHostReverseProxy(target)
-		proxy.FlushInterval = -1
+		proxy := &httputil.ReverseProxy{
+			Rewrite: func(proxyRequest *httputil.ProxyRequest) {
+				proxyRequest.SetURL(target)
+				proxyRequest.Out.SetBasicAuth(config.AuthUsername, config.AuthPassword)
+				proxyRequest.Out.Header.Set("Accept-Encoding", "identity")
+				slog.Default().Debug("pass reqeuest to downstream host", "path", path, "url", target.String())
+			},
+			FlushInterval: -1,
+			ModifyResponse: func(resp *http.Response) error {
+				contentType := resp.Header.Get("Content-Type")
+				resp.Header.Set("Cache-Control", "no-store")
 
-		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-			slog.Default().Error("proxy error", "method", r.Method, "path", r.URL.Path, "error", err)
-			http.Error(w, "workload unreachable", http.StatusBadGateway)
-		}
+				if !strings.Contains(contentType, "text/html") {
+					return nil
+				}
 
-		proxy.ModifyResponse = func(resp *http.Response) error {
-			contentType := resp.Header.Get("Content-Type")
-			if !strings.Contains(contentType, "text/html") {
-				return nil
-			}
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					resp.Body.Close()
+					return fmt.Errorf("read upstream body: %w", err)
+				}
 				resp.Body.Close()
-				return fmt.Errorf("read upstream body: %w", err)
-			}
-			resp.Body.Close()
 
-			const injectTag = "<script type=\"module\" crossorigin src=\"/.gw-mixin/index.js\" defer></script>"
-			lower := bytes.ToLower(body)
-			idx := bytes.LastIndex(lower, []byte("</body>"))
-			if idx == -1 {
-				resp.Body = io.NopCloser(bytes.NewReader(body))
-				resp.ContentLength = int64(len(body))
-				resp.Header.Set("Content-Length", fmt.Sprint(len(body)))
+				lower := bytes.ToLower(body)
+				idx := bytes.LastIndex(lower, []byte("</body>"))
+				if idx == -1 {
+					resp.Body = io.NopCloser(bytes.NewReader(body))
+					resp.ContentLength = int64(len(body))
+					resp.Header.Set("Content-Length", fmt.Sprint(len(body)))
+					return nil
+				}
+				const injectTag = "<script type=\"module\" crossorigin src=\"/.gw-mixin/index.js\" defer></script>"
+				var out bytes.Buffer
+				out.Write(body[:idx])
+				out.WriteString(injectTag)
+				out.Write(body[idx:])
+
+				resp.Body = io.NopCloser(&out)
+				resp.ContentLength = int64(out.Len())
+				resp.Header.Set("Content-Length", fmt.Sprint(out.Len()))
 				return nil
-			}
-			var out bytes.Buffer
-			out.Write(body[:idx])
-			out.WriteString(injectTag)
-			out.Write(body[idx:])
+			},
+			ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+				slog.Default().Error("proxy error", "method", r.Method, "path", r.URL.Path, "error", err)
 
-			resp.Body = io.NopCloser(&out)
-			resp.ContentLength = int64(out.Len())
-			resp.Header.Set("Content-Length", fmt.Sprint(out.Len()))
-			return nil
+				if _, ok := errors.AsType[*net.OpError](err); ok {
+					sessionManager.ActivateWorkspace(session.Id, auth.WorkloadReference{})
+					http.RedirectHandler("/", http.StatusTemporaryRedirect)
+				} else {
+					http.Error(w, "workload unreachable", http.StatusBadGateway)
+				}
+			},
 		}
 
 		proxy.ServeHTTP(writer, request)
 		return
 	})
 
-	opencode.Handle("GET /.gw-mixin/", http.FileServer(http.Dir("./static/opencode/")))
-
-	api.HandleFunc("GET /api/gitlab/project", func(w http.ResponseWriter, r *http.Request) {
-		search := r.URL.Query().Get("search")
-		page := 1
-		if raw := r.URL.Query().Get("page"); raw != "" {
-			if parsed, err := strconv.Atoi(raw); err == nil {
-				page = parsed
-			}
-		}
-
-		cookie, _ := r.Cookie("gw_session")
-		session, _ := sessionManager.Validate(cookie.Value)
-
-		result, err := gitlabClient.SearchProjects(session.Token, search, page)
-		if err != nil {
-			slog.Default().Warn("gitlab projects not found")
-			http.Error(w, "gitlab projects not found", http.StatusBadGateway)
-			return
-		}
-
-		misc.SendJson(w, http.StatusOK, result)
-	})
-
-	api.HandleFunc("GET /api/gitlab/project/{projectid}/branches", func(w http.ResponseWriter, r *http.Request) {
-		projectid := r.PathValue("projectid")
-
-		cookie, _ := r.Cookie("gw_session")
-		session, _ := sessionManager.Validate(cookie.Value)
-
-		branches, err := gitlabClient.ListBranches(session.Token, projectid)
-		if err != nil {
-			slog.Default().Error("unable to load branches", "err", err)
-			http.Error(w, "unable to load branches", http.StatusBadGateway)
-			return
-		}
-
-		misc.SendJson(w, http.StatusOK, branches)
-	})
-
-	api.HandleFunc("GET /api/user", func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("gw_session")
-		if err != nil {
-			http.Error(w, "invalid cookie", http.StatusUnauthorized)
-			return
-		}
-		session, err := sessionManager.Validate(cookie.Value)
-		if err != nil {
-			http.Error(w, "invalid cookie", http.StatusUnauthorized)
-			return
-		}
-		body := struct {
-			Username string `json:"username"`
-		}{
-			Username: session.Username,
-		}
-		misc.SendJson(w, http.StatusOK, body)
-	})
-
-	handler.Handle("/api/", authenticated(api))
-
-	handler.HandleFunc("POST /api/auth/token", func(w http.ResponseWriter, r *http.Request) {
+	rootHandler.HandleFunc("POST /api/auth/token", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Token string `json:"token"`
 		}
@@ -291,17 +257,26 @@ func main() {
 			http.Error(w, "invalid JSON", http.StatusBadRequest)
 			return
 		}
-		session, err := sessionManager.CreateSession(gitlab.Token{
+		token := gitlab.Token{
 			Value:     body.Token,
 			TokenType: "PRIVATE-TOKEN",
-		})
+		}
+		user, err := gitlabClient.GetUser(token)
+		if err != nil {
+			slog.Default().Error("unable to get user", "error", err)
+			http.Error(w, "unknown", http.StatusUnauthorized)
+			return
+		}
+		session, err := sessionManager.CreateSession(user.Username)
 		if err != nil {
 			http.Error(w, "invalid JSON", http.StatusUnauthorized)
 			return
 		}
+		sessionManager.PutValue(session.Id, gitlab.TokenKey, token)
+
 		slog.Default().Info("token introspection success", "username", session.Username)
 		http.SetCookie(w, &http.Cookie{
-			Name:     "gw_session",
+			Name:     auth.SessionCookieName,
 			Value:    session.Id,
 			Path:     "/",
 			HttpOnly: true,
@@ -312,30 +287,31 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	handler.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+	rootHandler.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 
-	handler.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static/git-works"))))
+	rootHandler.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static/git-works"))))
 
-	handler.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+	rootHandler.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, path.Join("./static/git-works", "index.html"))
 	})
 
 	srv := &http.Server{
 		Addr: appConfig.Host,
 		Handler: withTraceLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if cookie, err := r.Cookie("gw_session"); err == http.ErrNoCookie {
-				handler.ServeHTTP(w, r)
+			slog.Default().Debug("request", "path", r.URL.Path)
+			if cookie, err := r.Cookie(auth.SessionCookieName); err == http.ErrNoCookie {
+				rootHandler.ServeHTTP(w, r)
 			} else if session, err := sessionManager.Validate(cookie.Value); err != nil {
-				handler.ServeHTTP(w, r)
+				rootHandler.ServeHTTP(w, r)
 			} else if session.ActiveWorkload != auth.NilWorkloadReference() {
 				// hier noch einen healthcheck ausführen ??
-				authenticated(opencode).ServeHTTP(w, r)
+				sessionManager.Authenticated(opencodeHandler).ServeHTTP(w, r)
 			} else {
-				handler.ServeHTTP(w, r)
+				rootHandler.ServeHTTP(w, r)
 			}
 		})),
 		DisableGeneralOptionsHandler: false,
@@ -346,14 +322,14 @@ func main() {
 	}
 
 	slog.Default().Info("starting server", slog.String("host", appConfig.Host), slog.Bool("tls", appConfig.UseTLS))
-	var serveErr error
+	var serverErr error
 	if appConfig.UseTLS {
-		serveErr = srv.ListenAndServeTLS(appConfig.TLSCert, appConfig.TLSKey)
+		serverErr = srv.ListenAndServeTLS(appConfig.TLSCert, appConfig.TLSKey)
 	} else {
-		serveErr = srv.ListenAndServe()
+		serverErr = srv.ListenAndServe()
 	}
-	if serveErr != nil && serveErr != http.ErrServerClosed {
-		slog.Default().Error("server error", "error", serveErr)
+	if serverErr != nil && serverErr != http.ErrServerClosed {
+		slog.Default().Error("server error", "error", serverErr)
 		os.Exit(1)
 	}
 }
@@ -361,6 +337,14 @@ func main() {
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
+}
+
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := r.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	return h.Hijack()
 }
 
 func (r *statusRecorder) Flush() {

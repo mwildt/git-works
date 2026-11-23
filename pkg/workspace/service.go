@@ -12,6 +12,7 @@ import (
 	"gtihub.com/mwildt/git-works/pkg/actions"
 	"gtihub.com/mwildt/git-works/pkg/auth"
 	"gtihub.com/mwildt/git-works/pkg/git"
+	"gtihub.com/mwildt/git-works/pkg/gitlab"
 )
 
 type ProjectStatus struct {
@@ -74,7 +75,7 @@ func (s *Service) WorkloadStatus(_ context.Context, workload Workload) (string, 
 }
 
 func (s *Service) WorkspaceInit(ctx context.Context, workspace Workspace) error {
-	token, ok := auth.Token(ctx)
+	token, ok := gitlab.ReadToken(ctx)
 	if !ok {
 		return Forbidden
 	}
@@ -88,7 +89,7 @@ func (s *Service) WorkspaceInit(ctx context.Context, workspace Workspace) error 
 }
 
 func (s *Service) ProjectInit(ctx context.Context, workspace *Workspace, project Project) error {
-	token, ok := auth.Token(ctx)
+	token, ok := gitlab.ReadToken(ctx)
 	if !ok {
 		return Forbidden
 	}
@@ -100,7 +101,7 @@ func (s *Service) WorkloadInit(ctx context.Context, workspace *Workspace, worklo
 }
 
 func (s *Service) WorkloadStart(ctx context.Context, workspace *Workspace, workload Workload) error {
-	token, ok := auth.Token(ctx)
+	token, ok := gitlab.ReadToken(ctx)
 	if !ok {
 		return Forbidden
 	}
@@ -108,7 +109,7 @@ func (s *Service) WorkloadStart(ctx context.Context, workspace *Workspace, workl
 }
 
 func (s *Service) WorkloadStop(ctx context.Context, workspace *Workspace, workload Workload) error {
-	token, ok := auth.Token(ctx)
+	token, ok := gitlab.ReadToken(ctx)
 	if !ok {
 		return Forbidden
 	}
@@ -120,10 +121,12 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	err = s.repo.Delete(ctx, workspace.Id)
-	if err != nil {
+
+	// Save the workspace with workload delete events
+	if err := s.repo.Delete(ctx, id); err != nil {
 		return err
 	}
+
 	go func() {
 		workspacePath := workspace.baseDir()
 		err := os.RemoveAll(workspacePath)
@@ -171,7 +174,7 @@ func (s *Service) ProjectPush(ctx context.Context, workspaceId uuid.UUID, projec
 	if err != nil {
 		return err
 	}
-	token, ok := auth.Token(ctx)
+	token, ok := gitlab.ReadToken(ctx)
 	if !ok {
 		return Forbidden
 	}
@@ -184,7 +187,7 @@ func (s *Service) ProjectCommitPush(ctx context.Context, workspaceId uuid.UUID, 
 	if err != nil {
 		return err
 	}
-	token, ok := auth.Token(ctx)
+	token, ok := gitlab.ReadToken(ctx)
 	if !ok {
 		return Forbidden
 	}
@@ -224,4 +227,12 @@ func currentBranch(dir string) string {
 
 	return strings.TrimSpace(string(output))
 
+}
+
+func (s *Service) CreateVscodeWorkload(ctx context.Context, workspace *Workspace) error {
+	host := "127.0.0.1"
+	if err := workspace.CreateVscodeWorkload(host, s.portManager); err != nil {
+		return err
+	}
+	return s.repo.Save(ctx, workspace)
 }
