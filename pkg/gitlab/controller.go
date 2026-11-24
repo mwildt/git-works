@@ -12,12 +12,14 @@ import (
 type Controller struct {
 	sessionManager *auth.Manager
 	gitlabClient   *Client
+	tokenProvider  *TokenProvider
 }
 
-func NewController(gitlabClient *Client, sessionManager *auth.Manager) *Controller {
+func NewController(gitlabClient *Client, sessionManager *auth.Manager, tokenProvider *TokenProvider) *Controller {
 	return &Controller{
 		sessionManager: sessionManager,
 		gitlabClient:   gitlabClient,
+		tokenProvider:  tokenProvider,
 	}
 }
 
@@ -25,9 +27,10 @@ func (ctrl *Controller) SetUp(router *http.ServeMux) {
 
 	router.HandleFunc("GET /api/gitlab/project", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-		token, ok := ReadToken(r.Context())
-		if !ok {
-			http.Error(w, "gitlab projects not found", http.StatusForbidden)
+		token, err := ctrl.tokenProvider.TokenFor(r.Context())
+		if err != nil {
+			slog.Default().Warn("unable to resolve token", "error", err)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
@@ -50,9 +53,10 @@ func (ctrl *Controller) SetUp(router *http.ServeMux) {
 	})))
 
 	router.HandleFunc("GET /api/gitlab/project/{projectid}/branches", ctrl.sessionManager.Authenticated(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token, ok := ReadToken(r.Context())
-		if !ok {
-			http.Error(w, "gitlab projects not found", http.StatusForbidden)
+		token, err := ctrl.tokenProvider.TokenFor(r.Context())
+		if err != nil {
+			slog.Default().Warn("unable to resolve token", "error", err)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 

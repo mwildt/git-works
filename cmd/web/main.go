@@ -70,13 +70,36 @@ func main() {
 	portmanager := workspaces.NewPortManager(config.GetEnvInt("WORKSPACE_START_PORT", 9000))
 	dispatcher.RegisterFunc(portmanager.Handle)
 
-	auth.NewController(sessionManager).SetUp(rootHandler)
-
 	// **********************************************************+
 	// Gitlab Init
 	// **********************************************************+
-	gitlabClient := gitlab.NewClient(config.GetEnv("GITLAB_BASE_URL", "https://gitlab.com"))
-	gitlab.NewController(gitlabClient, sessionManager).SetUp(rootHandler)
+	gitlabBaseURL := config.GetEnv("GITLAB_BASE_URL", "https://gitlab.com")
+	gitlabClient := gitlab.NewClient(gitlabBaseURL)
+
+	// **********************************************************+
+	// OIDC Init (optional, gegen die GitLab-Instanz als Provider)
+	// **********************************************************+
+	oidcConfig := auth.OIDCConfig{
+		ClientID:      config.GetEnv("OIDC_CLIENT_ID", ""),
+		ClientSecret:  config.GetEnv("OIDC_CLIENT_SECRET", ""),
+		Scopes:        config.GetEnv("OIDC_SCOPES", auth.DefaultOIDCScopes),
+		PublicBaseURL: config.GetEnv("PUBLIC_BASE_URL", ""),
+		RedirectURI:   config.GetEnv("OIDC_REDIRECT_URI", ""),
+	}
+	if oidcConfig.RedirectURI == "" && oidcConfig.PublicBaseURL != "" {
+		oidcConfig.RedirectURI = strings.TrimSuffix(oidcConfig.PublicBaseURL, "/") + "/api/auth/oidc/callback"
+	}
+	var oidcClient *auth.OIDCClient
+	if oidcConfig.Enabled() {
+		oidcClient = auth.NewOIDCClient(gitlabBaseURL, oidcConfig)
+		slog.Default().Info("oidc login enabled", "issuer", gitlabBaseURL, "redirect_uri", oidcConfig.RedirectURI)
+	} else {
+		slog.Default().Info("oidc login disabled (OIDC_CLIENT_ID, OIDC_CLIENT_SECRET und PUBLIC_BASE_URL/OIDC_REDIRECT_URI nicht vollstaendig gesetzt)")
+	}
+	tokenProvider := gitlab.NewTokenProvider(sessionManager, oidcClient)
+
+	auth.NewController(sessionManager, oidcClient, appConfig.UseTLS).SetUp(rootHandler)
+	gitlab.NewController(gitlabClient, sessionManager, tokenProvider).SetUp(rootHandler)
 
 	// **********************************************************+
 	// Workspace Init
@@ -95,7 +118,7 @@ func main() {
 		workspaceInit := workspaces.NewWorkloadInitializer(workspaceRepo, portmanager)
 		dispatcher.RegisterFunc(workspaceInit.Handle)
 
-		workspaceService := workspaces.NewService(workspaceRepo, gitClient, opencodeActions, portmanager)
+		workspaceService := workspaces.NewService(workspaceRepo, gitClient, opencodeActions, portmanager, tokenProvider)
 		if workspaceController, err := workspaces.NewController(workspaceRepo, workspaceService, sessionManager, workspaceView); err != nil {
 			log.Fatal(err)
 		} else {
@@ -267,7 +290,7 @@ func main() {
 			http.Error(w, "unknown", http.StatusUnauthorized)
 			return
 		}
-		session, err := sessionManager.CreateSession(user.Username)
+		session, err := sessionManager.CreateSession(user.Username, auth.AuthMethodToken)
 		if err != nil {
 			http.Error(w, "invalid JSON", http.StatusUnauthorized)
 			return
