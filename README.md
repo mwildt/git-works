@@ -36,8 +36,15 @@ Der Opencode-Container wird über `opencode.containerfile` gebaut.
 | `TLS_CERT_FILE` | – | Pfad zum TLS-Zertifikat (PEM). Wenn gesetzt (zusammen mit `TLS_KEY_FILE`), startet der Server mit HTTPS |
 | `TLS_KEY_FILE` | – | Pfad zum privaten TLS-Key (PEM) |
 | `DATA_DIR` | `./data` | Basisverzeichnis für Workspace-Daten |
+| `WORKSPACE_LOG` | `./data/workspace.v2.log` | Datei für das Workspace-Event-Log |
+
+### GitLab
+
+| Variable | Default | Beschreibung |
+|---|---|---|
 | `GITLAB_BASE_URL` | `https://gitlab.com` | Basis-URL der GitLab-Instanz (API-URL) |
 | `GITLAB_ACTIONS_FILE` | `gitlab-http-actions.yml` | Konfiguration der verfügbaren GitLab-HTTP-Aktionen |
+| `GITLAB_TOKEN` | – | Optionales server-seitiges GitLab-Token; wird als `config_gitlab_token` an die Workload-Aktionen übergeben |
 
 ### Git
 
@@ -50,11 +57,18 @@ Der Opencode-Container wird über `opencode.containerfile` gebaut.
 
 | Variable | Default | Beschreibung |
 |---|---|---|
-| `OPENCODE_REMOTE_HOST` | `127.0.0.1` | Host, unter dem die Opencode-Workloads erreichbar sind |
+| `OPENCODE_REMOTE_HOST` | `127.0.0.1` | Host, unter dem die Opencode-/VSCode-Workloads erreichbar sind |
 | `WORKSPACE_START_PORT` | `9000` | Startport für die Portvergabe der Workloads |
 | `OPENCODE_TEMPLATE_FILE` | `opencode.json` | Template-Datei für die Opencode-Konfiguration pro Workload |
-| `OPENCODE_TARGET_URL` | `http://{{.host}}:{{.port}}/` | URL-Template, unter dem ein Workload erreichbar ist |
-| `WORKSPACE_LOG` | – | Wenn gesetzt, wird das Workspace-Log in diese Datei geschrieben |
+| `VSCODE_TEMPLATE_FILE` | `vscode.json` | Template-Datei für die VSCode-Konfiguration pro Workload |
+
+### Mock-Server (`cmd/mock`)
+
+| Variable | Default | Beschreibung |
+|---|---|---|
+| `SERVICE_ADRESS` | `:8999` | Listen-Adresse des Mock-Servers (Schreibweise im Code: `ADRESS`) |
+
+Hinweis: Der `Containerfile` setzt zusätzlich `PORT`, `WORKSPACE_BASE_DIR` und `STATIC_DIR` – diese werden vom Go-Code nicht gelesen. Bitte stattdessen `SERVER_ADDRESS` bzw. `DATA_DIR` setzen.
 
 ## HTTP-Endpunkte
 
