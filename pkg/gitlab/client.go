@@ -1,7 +1,6 @@
 package gitlab
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,11 +9,11 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-
-	"gtihub.com/mwildt/git-works/pkg/auth"
 )
 
 const TokenKey = "GITAB-TOKEN"
+
+const TokenTypeBearer = "Bearer"
 
 type (
 	Token struct {
@@ -61,12 +60,12 @@ type (
 	}
 )
 
-func ReadToken(ctx context.Context) (Token, bool) {
-	if session, ok := auth.ReadSession(ctx); ok {
-		token := session.Value(TokenKey).(Token)
-		return token, true
+func setAuthHeader(req *http.Request, token Token) {
+	if token.TokenType == TokenTypeBearer {
+		req.Header.Set("Authorization", "Bearer "+token.Value)
+	} else {
+		req.Header.Set(token.TokenType, token.Value)
 	}
-	return Token{}, false
 }
 
 func NewClient(baseUrl string) *Client {
@@ -80,10 +79,10 @@ func (c *Client) GetUser(token Token) (user *UserResponse, err error) {
 	url := c.baseUrl + "/api/v4/user"
 	slog.Default().Info("Getting user", "url", url, "token-type", token.TokenType)
 	req, err := http.NewRequest("GET", url, nil)
-	req.Header.Set(token.TokenType, token.Value)
 	if err != nil {
 		return
 	}
+	setAuthHeader(req, token)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return
@@ -116,7 +115,7 @@ func (c *Client) SearchProjects(token Token, search string, page int) (*ProjectS
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set(token.TokenType, token.Value)
+	setAuthHeader(req, token)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -145,7 +144,7 @@ func (c *Client) ListBranches(token Token, projectid string) (branches []Branch,
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set(token.TokenType, token.Value)
+	setAuthHeader(req, token)
 
 	resp, err := c.client.Do(req)
 	if err != nil {

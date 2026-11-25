@@ -72,6 +72,9 @@ func (p *PortManager) Reserve(workloadId uuid.UUID, host string) (int, error) {
 func isPortBusy(host, port string) bool {
 	slog.Default().Info("checking port busy", "host", host, "port", port)
 	listener, err := net.Listen("tcp", ":"+port)
-	defer listener.Close()
+	if err == nil {
+		defer listener.Close()
+	}
+
 	return err != nil
 }

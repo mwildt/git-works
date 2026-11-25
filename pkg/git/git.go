@@ -49,11 +49,7 @@ func (g *Git) Clone(token gitlab.Token, url string, path string, branch string) 
 		defer cancel()
 
 		cmd := exec.CommandContext(ctx, "git", "clone", "--branch", branch, "--depth", "1", url, path)
-		cmd.Env = append(os.Environ(),
-			"SSH_ASKPASS_REQUIRE=force",
-			fmt.Sprintf("SSH_ASKPASS=%s", config.GetEnv("SSH_ASKPASS", "/usr/local/bin/git-askpass")),
-			fmt.Sprintf("GIT_TOKEN=%s", token.Value),
-		)
+		cmd.Env = askpassEnv(token)
 		output, err := cmd.CombinedOutput()
 
 		if err == nil {
@@ -135,6 +131,7 @@ func askpassEnv(token gitlab.Token) []string {
 		"SSH_ASKPASS_REQUIRE=force",
 		fmt.Sprintf("SSH_ASKPASS=%s", config.GetEnv("SSH_ASKPASS", "/usr/local/bin/git-askpass")),
 		fmt.Sprintf("GIT_TOKEN=%s", token.Value),
+		fmt.Sprintf("GIT_TOKEN_TYPE=%s", token.TokenType),
 	)
 }
 

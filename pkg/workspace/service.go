@@ -24,14 +24,15 @@ type ProjectStatus struct {
 }
 
 type Service struct {
-	repo        *Repository
-	gitClient   *git.Git
-	actions     *actions.Client
-	portManager *PortManager
+	repo          *Repository
+	gitClient     *git.Git
+	actions       *actions.Client
+	portManager   *PortManager
+	tokenProvider *gitlab.TokenProvider
 }
 
-func NewService(repo *Repository, gitClient *git.Git, actions *actions.Client, portManager *PortManager) *Service {
-	return &Service{repo: repo, gitClient: gitClient, actions: actions, portManager: portManager}
+func NewService(repo *Repository, gitClient *git.Git, actions *actions.Client, portManager *PortManager, tokenProvider *gitlab.TokenProvider) *Service {
+	return &Service{repo: repo, gitClient: gitClient, actions: actions, portManager: portManager, tokenProvider: tokenProvider}
 }
 
 func (s *Service) Create(ctx context.Context) (*Workspace, error) {
@@ -75,8 +76,8 @@ func (s *Service) WorkloadStatus(_ context.Context, workload Workload) (string, 
 }
 
 func (s *Service) WorkspaceInit(ctx context.Context, workspace Workspace) error {
-	token, ok := gitlab.ReadToken(ctx)
-	if !ok {
+	token, err := s.tokenProvider.TokenFor(ctx)
+	if err != nil {
 		return Forbidden
 	}
 	workspacePath := workspace.workspaceDir()
@@ -89,8 +90,8 @@ func (s *Service) WorkspaceInit(ctx context.Context, workspace Workspace) error 
 }
 
 func (s *Service) ProjectInit(ctx context.Context, workspace *Workspace, project Project) error {
-	token, ok := gitlab.ReadToken(ctx)
-	if !ok {
+	token, err := s.tokenProvider.TokenFor(ctx)
+	if err != nil {
 		return Forbidden
 	}
 	return project.Init(token, s.gitClient, workspace.workspaceDir())
@@ -101,16 +102,16 @@ func (s *Service) WorkloadInit(ctx context.Context, workspace *Workspace, worklo
 }
 
 func (s *Service) WorkloadStart(ctx context.Context, workspace *Workspace, workload Workload) error {
-	token, ok := gitlab.ReadToken(ctx)
-	if !ok {
+	token, err := s.tokenProvider.TokenFor(ctx)
+	if err != nil {
 		return Forbidden
 	}
 	return workload.Start(token, s.actions, workspace.Id)
 }
 
 func (s *Service) WorkloadStop(ctx context.Context, workspace *Workspace, workload Workload) error {
-	token, ok := gitlab.ReadToken(ctx)
-	if !ok {
+	token, err := s.tokenProvider.TokenFor(ctx)
+	if err != nil {
 		return Forbidden
 	}
 	return workload.Stop(token, s.actions, workspace.Id)
@@ -174,8 +175,8 @@ func (s *Service) ProjectPush(ctx context.Context, workspaceId uuid.UUID, projec
 	if err != nil {
 		return err
 	}
-	token, ok := gitlab.ReadToken(ctx)
-	if !ok {
+	token, err := s.tokenProvider.TokenFor(ctx)
+	if err != nil {
 		return Forbidden
 	}
 	slog.Default().Info("push", "workspaceId", workspaceId, "projectId", projectId, "branch", request.Branch)
@@ -187,8 +188,8 @@ func (s *Service) ProjectCommitPush(ctx context.Context, workspaceId uuid.UUID, 
 	if err != nil {
 		return err
 	}
-	token, ok := gitlab.ReadToken(ctx)
-	if !ok {
+	token, err := s.tokenProvider.TokenFor(ctx)
+	if err != nil {
 		return Forbidden
 	}
 	slog.Default().Info("commit push", "workspaceId", workspaceId, "projectId", projectId)
