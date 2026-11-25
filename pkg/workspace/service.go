@@ -7,10 +7,12 @@ import (
 	"os/exec"
 	"path"
 	"strings"
+	"time"
 	"uuid"
 
 	"gtihub.com/mwildt/git-works/pkg/actions"
 	"gtihub.com/mwildt/git-works/pkg/auth"
+	"gtihub.com/mwildt/git-works/pkg/events"
 	"gtihub.com/mwildt/git-works/pkg/git"
 	"gtihub.com/mwildt/git-works/pkg/gitlab"
 )
@@ -29,10 +31,11 @@ type Service struct {
 	actions       *actions.Client
 	portManager   *PortManager
 	tokenProvider *gitlab.TokenProvider
+	dispatcher    *events.Dispatcher
 }
 
-func NewService(repo *Repository, gitClient *git.Git, actions *actions.Client, portManager *PortManager, tokenProvider *gitlab.TokenProvider) *Service {
-	return &Service{repo: repo, gitClient: gitClient, actions: actions, portManager: portManager, tokenProvider: tokenProvider}
+func NewService(repo *Repository, gitClient *git.Git, actions *actions.Client, portManager *PortManager, tokenProvider *gitlab.TokenProvider, dispatcher *events.Dispatcher) *Service {
+	return &Service{repo: repo, gitClient: gitClient, actions: actions, portManager: portManager, tokenProvider: tokenProvider, dispatcher: dispatcher}
 }
 
 func (s *Service) Create(ctx context.Context) (*Workspace, error) {
@@ -106,7 +109,11 @@ func (s *Service) WorkloadStart(ctx context.Context, workspace *Workspace, workl
 	if err != nil {
 		return Forbidden
 	}
-	return workload.Start(token, s.actions, workspace.Id)
+	if err := workload.Start(token, s.actions, workspace.Id); err != nil {
+		return err
+	}
+	s.dispatchRuntime(ctx, workspace.Id, &WorkloadStarted{WorkspaceId: workspace.Id, WorkloadId: workload.Id, At: time.Now()})
+	return nil
 }
 
 func (s *Service) WorkloadStop(ctx context.Context, workspace *Workspace, workload Workload) error {
@@ -114,7 +121,23 @@ func (s *Service) WorkloadStop(ctx context.Context, workspace *Workspace, worklo
 	if err != nil {
 		return Forbidden
 	}
-	return workload.Stop(token, s.actions, workspace.Id)
+	if err := workload.Stop(token, s.actions, workspace.Id); err != nil {
+		return err
+	}
+	s.dispatchRuntime(ctx, workspace.Id, &WorkloadStopped{WorkspaceId: workspace.Id, WorkloadId: workload.Id, At: time.Now()})
+	return nil
+}
+
+// dispatchRuntime feuert ein nicht-persistentes Runtime-Event auf dem
+// Dispatcher. Es wird nie an das Repository angehängt und landet damit
+// nicht im Event-Log.
+func (s *Service) dispatchRuntime(ctx context.Context, workspaceId uuid.UUID, event events.DomainEvent) {
+	if s.dispatcher == nil {
+		return
+	}
+	if err := s.dispatcher.Dispatch(ctx, NewRuntimeEnvelope(workspaceId, event, time.Now())); err != nil {
+		slog.Default().Warn("unable to dispatch runtime event", "type", event.EventType(), "error", err)
+	}
 }
 
 func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {

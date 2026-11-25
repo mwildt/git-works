@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,6 +71,12 @@ func main() {
 	portmanager := workspaces.NewPortManager(config.GetEnvInt("WORKSPACE_START_PORT", 9000))
 	dispatcher.RegisterFunc(portmanager.Handle)
 
+	activityTracker := workspaces.NewActivityTracker()
+	dispatcher.RegisterFunc(activityTracker.Handle)
+
+	allWorkspacesView := workspaces.NewWorkspacesView()
+	dispatcher.RegisterFunc(allWorkspacesView.Handle)
+
 	// **********************************************************+
 	// Gitlab Init
 	// **********************************************************+
@@ -118,7 +125,7 @@ func main() {
 		workspaceInit := workspaces.NewWorkloadInitializer(workspaceRepo, portmanager)
 		dispatcher.RegisterFunc(workspaceInit.Handle)
 
-		workspaceService := workspaces.NewService(workspaceRepo, gitClient, opencodeActions, portmanager, tokenProvider)
+		workspaceService := workspaces.NewService(workspaceRepo, gitClient, opencodeActions, portmanager, tokenProvider, dispatcher)
 		if workspaceController, err := workspaces.NewController(workspaceRepo, workspaceService, sessionManager, workspaceView); err != nil {
 			log.Fatal(err)
 		} else {
@@ -134,6 +141,12 @@ func main() {
 	if err = workspaceRepo.Replay(); err != nil {
 		log.Fatal(err)
 	}
+
+	// Idle-Reaper: stoppt laufende Workloads nach ihrer Inaktivitäts-TTL.
+	// Der erste Lauf markiert alle laufenden Workloads als "jetzt aktiv"
+	// (nach einem Restart ist der ActivityTracker leer).
+	idleReaper := workspaces.NewIdleReaper(workspaceRepo, opencodeActions, activityTracker, allWorkspacesView, dispatcher, config.GetEnvDuration("WORKLOAD_IDLE_CHECK_INTERVAL", time.Minute))
+	go idleReaper.Start(context.Background())
 
 	opencodeHandler.HandleFunc("PATCH /.git-works/session-mode", func(writer http.ResponseWriter, request *http.Request) {
 		cookie, err := request.Cookie(auth.SessionCookieName)
@@ -176,7 +189,7 @@ func main() {
 			return
 		}
 
-		_, workload, err := workspaceRepo.WorkloadById(request.Context(), session.ActiveWorkload.WorkspaceId, session.ActiveWorkload.WorkloadId)
+		workspace, workload, err := workspaceRepo.WorkloadById(request.Context(), session.ActiveWorkload.WorkspaceId, session.ActiveWorkload.WorkloadId)
 		if err != nil {
 			slog.Default().Warn("workspace not found")
 			http.Error(writer, "not found", http.StatusBadRequest)
@@ -206,6 +219,14 @@ func main() {
 					return
 				}
 			}
+		}
+
+		if err := dispatcher.Dispatch(request.Context(), workspaces.NewRuntimeEnvelope(workspace.Id, &workspaces.WorkloadTouched{
+			WorkspaceId: workspace.Id,
+			WorkloadId:  workload.Id,
+			At:          time.Now(),
+		}, time.Now())); err != nil {
+			slog.Default().Warn("unable to dispatch workload touched event", "error", err)
 		}
 
 		target, err := url.Parse(config.TargetUrl())

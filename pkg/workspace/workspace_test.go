@@ -29,7 +29,7 @@ func TestServiceRepo(t *testing.T) {
 		t.Fatalf("Error creating repository: %s", err)
 	}
 
-	service := NewService(repo, nil, nil, portmanager, nil)
+	service := NewService(repo, nil, nil, portmanager, nil, dispatcher)
 
 	ctx := auth.WithSession(context.Background(), auth.Session{
 		Id:             "my-session",

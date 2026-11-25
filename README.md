@@ -73,6 +73,12 @@ Ist nur aktiv, wenn `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` und eine Redirect-URI
 | `WORKSPACE_START_PORT` | `9000` | Startport für die Portvergabe der Workloads |
 | `OPENCODE_TEMPLATE_FILE` | `opencode.json` | Template-Datei für die Opencode-Konfiguration pro Workload |
 | `VSCODE_TEMPLATE_FILE` | `vscode.json` | Template-Datei für die VSCode-Konfiguration pro Workload |
+| `WORKLOAD_IDLE_TIMEOUT` | `30m` | Default-Inaktivitäts-TTL pro Workload; wird beim Anlegen im Workload persistiert (`idle_timeout`); `0` deaktiviert das automatische Stoppen für diesen Workload |
+| `WORKLOAD_IDLE_CHECK_INTERVAL` | `1m` | Intervall des Hintergrund-Jobs, der laufende Workloads nach Inaktivität stoppt |
+
+### Automatisches Stoppen inaktiver Workloads
+
+Jeder Request, der über den Proxy an einen Workload geleitet wird, erzeugt ein nicht-persistentes Runtime-Event (`workload.touched`) und aktualisiert den Aktivitätszeitpunkt im In-Memory-`ActivityTracker`. Ebenso feuern Start/Stop eines Workloads (`workload.started`/`workload.stopped`) bzw. das automatische Stoppen (`workload.idle-stopped`) Runtime-Events auf dem Event-Dispatcher. Ein Hintergrund-Job (`WORKLOAD_IDLE_CHECK_INTERVAL`) prüft regelmäßig alle laufenden Workloads und stoppt diejenigen, deren letzte Aktivität länger als die TTL des Workloads (`WORKLOAD_IDLE_TIMEOUT`, beim Anlegen als `idle_timeout` im Domain-Event gespeichert) zurückliegt. Die Touch-Zeitstempel sind nicht persistent: Nach einem Restart gelten alle laufenden Workloads als „gerade aktiv“ und laufen die TTL erneut ab.
 
 ### Mock-Server (`cmd/mock`)
 
