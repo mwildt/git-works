@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const DefaultOIDCScopes = "openid profile email api offline_access"
+const DefaultOIDCScopes = "openid profile read_user api read_repository write_repository"
 
 type OIDCConfig struct {
 	ClientID      string
