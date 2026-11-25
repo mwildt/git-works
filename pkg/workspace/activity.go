@@ -13,104 +13,38 @@ import (
 	"gtihub.com/mwildt/git-works/pkg/gitlab"
 )
 
-// ActivityTracker speichert den letzten Aktivitätszeitpunkt pro Workload -
-// nur im Speicher, nie im Event-Log. Nach einem Restart ist die Map leer;
-// der Reaper markiert laufende Workloads beim ersten Lauf als "jetzt aktiv".
-type ActivityTracker struct {
-	mu   sync.Mutex
-	last map[uuid.UUID]time.Time
+// activityEntry ist die letzte Aktion pro Workspace: welcher Workload zuletzt
+// aktiv war und wann. Rein im Speicher - nicht persistent.
+type activityEntry struct {
+	WorkloadId uuid.UUID
+	At         time.Time
 }
 
-func NewActivityTracker() *ActivityTracker {
-	return &ActivityTracker{last: make(map[uuid.UUID]time.Time)}
-}
-
-func (t *ActivityTracker) Handle(_ context.Context, envelope events.Envelope) error {
-	if envelope.IsReplay() {
-		return nil
-	}
-	if e, ok := envelope.Event().(*WorkloadActivity); ok {
-		t.set(e.WorkloadId, e.At)
-	}
-	return nil
-}
-
-func (t *ActivityTracker) Touch(workloadId uuid.UUID) {
-	t.TouchAt(workloadId, time.Now())
-}
-
-func (t *ActivityTracker) TouchAt(workloadId uuid.UUID, at time.Time) {
-	t.set(workloadId, at)
-}
-
-func (t *ActivityTracker) Last(workloadId uuid.UUID) (time.Time, bool) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	last, ok := t.last[workloadId]
-	return last, ok
-}
-
-func (t *ActivityTracker) set(workloadId uuid.UUID, at time.Time) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.last[workloadId] = at
-}
-
-// WorkspacesView pflegt die Menge aller Workspace-IDs (auch beim Replay) und
-// dient dem IdleReaper zur Enumeration aller Workloads.
-type WorkspacesView struct {
-	mu  sync.Mutex
-	ids map[uuid.UUID]bool
-}
-
-func NewWorkspacesView() *WorkspacesView {
-	return &WorkspacesView{ids: make(map[uuid.UUID]bool)}
-}
-
-func (v *WorkspacesView) Handle(_ context.Context, envelope events.Envelope) error {
-	switch e := envelope.Event().(type) {
-	case *WorkspaceCreated:
-		v.mu.Lock()
-		v.ids[e.Id] = true
-		v.mu.Unlock()
-	case *WorkspaceDeleted:
-		v.mu.Lock()
-		delete(v.ids, e.Id)
-		v.mu.Unlock()
-	}
-	return nil
-}
-
-func (v *WorkspacesView) Ids() []uuid.UUID {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	ids := make([]uuid.UUID, 0, len(v.ids))
-	for id := range v.ids {
-		ids = append(ids, id)
-	}
-	return ids
-}
-
-// IdleReaper läuft regelmäßig über alle Workloads und stoppt laufende
-// Workloads, deren letzte Aktivität länger als die TTL des Workloads
-// (Workload.IdleTimeout) zurückliegt.
+// IdleReaper ist zugleich die Sammlung der letzten Aktion pro Workspace und der
+// Hintergrund-Job, der inaktive Workloads stoppt. Handle lauscht auf dem
+// Event-Dispatcher: WorkspaceCreated/WorkspaceDeleted pflegen die Menge der
+// Workspaces (beim Replay wird "jetzt" eingetragen, damit nach einem Restart
+// alle laufenden Workloads als aktiv gelten und die TTL erneut ablaufen),
+// WorkloadActivity aktualisiert den Zeitpunkt des betroffenen Workloads.
 type IdleReaper struct {
+	mu         sync.Mutex
+	lastAction map[uuid.UUID]activityEntry
+
 	repo       *Repository
+	actions    *actions.Client
 	dispatcher *events.Dispatcher
-	tracker    *ActivityTracker
-	view       *WorkspacesView
 	interval   time.Duration
 	now        func() time.Time
 	statusFn   func(workload Workload) (string, error)
 	stopFn     func(ctx context.Context, workspace *Workspace, workload Workload) error
 }
 
-func NewIdleReaper(repo *Repository, actionsClient *actions.Client, tracker *ActivityTracker, view *WorkspacesView, dispatcher *events.Dispatcher, interval time.Duration) *IdleReaper {
+func NewIdleReaper(repo *Repository, actionsClient *actions.Client, dispatcher *events.Dispatcher, interval time.Duration) *IdleReaper {
 	r := &IdleReaper{
+		lastAction: make(map[uuid.UUID]activityEntry),
 		repo:       repo,
+		actions:    actionsClient,
 		dispatcher: dispatcher,
-		tracker:    tracker,
-		view:       view,
 		interval:   interval,
 		now:        time.Now,
 	}
@@ -122,6 +56,42 @@ func NewIdleReaper(repo *Repository, actionsClient *actions.Client, tracker *Act
 		return workload.Stop(token, actionsClient, workspace.Id)
 	}
 	return r
+}
+
+func (r *IdleReaper) Handle(_ context.Context, envelope events.Envelope) error {
+	switch e := envelope.Event().(type) {
+	case *WorkspaceCreated:
+		r.set(e.Id, activityEntry{At: r.now()})
+	case *WorkspaceDeleted:
+		r.remove(e.Id)
+	case *WorkloadActivity:
+		if !envelope.IsReplay() {
+			r.set(e.WorkspaceId, activityEntry{WorkloadId: e.WorkloadId, At: e.At})
+		}
+	}
+	return nil
+}
+
+func (r *IdleReaper) set(workspaceId uuid.UUID, entry activityEntry) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastAction[workspaceId] = entry
+}
+
+func (r *IdleReaper) remove(workspaceId uuid.UUID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.lastAction, workspaceId)
+}
+
+func (r *IdleReaper) entries() map[uuid.UUID]activityEntry {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make(map[uuid.UUID]activityEntry, len(r.lastAction))
+	for id, entry := range r.lastAction {
+		out[id] = entry
+	}
+	return out
 }
 
 func (r *IdleReaper) Start(ctx context.Context) {
@@ -140,19 +110,25 @@ func (r *IdleReaper) Start(ctx context.Context) {
 
 func (r *IdleReaper) RunOnce(ctx context.Context) {
 	now := r.now()
-	for _, workspaceId := range r.view.Ids() {
+	for workspaceId, entry := range r.entries() {
 		workspace, err := r.repo.LoadById(ctx, workspaceId)
 		if err != nil {
 			slog.Default().Warn("idle reaper: unable to load workspace", "workspaceId", workspaceId, "error", err)
 			continue
 		}
-		for _, workload := range workspace.Workloads {
-			r.check(ctx, workspace, workload, now)
+		targets := workspace.Workloads
+		if entry.WorkloadId != uuid.Nil() {
+			if workload, ok := workspace.WorkloadById(entry.WorkloadId); ok {
+				targets = []Workload{workload}
+			}
+		}
+		for _, workload := range targets {
+			r.check(ctx, workspace, workload, entry.At, now)
 		}
 	}
 }
 
-func (r *IdleReaper) check(ctx context.Context, workspace *Workspace, workload Workload, now time.Time) {
+func (r *IdleReaper) check(ctx context.Context, workspace *Workspace, workload Workload, last, now time.Time) {
 	ttl := workload.IdleTimeout()
 	if ttl <= 0 {
 		return
@@ -163,12 +139,6 @@ func (r *IdleReaper) check(ctx context.Context, workspace *Workspace, workload W
 		return
 	}
 	if status != "up" {
-		return
-	}
-	last, ok := r.tracker.Last(workload.Id)
-	if !ok {
-		// Erstmalig gesehen (z. B. nach einem Restart): gilt als jetzt aktiv.
-		r.tracker.TouchAt(workload.Id, now)
 		return
 	}
 	idleFor := now.Sub(last)

@@ -71,12 +71,6 @@ func main() {
 	portmanager := workspaces.NewPortManager(config.GetEnvInt("WORKSPACE_START_PORT", 9000))
 	dispatcher.RegisterFunc(portmanager.Handle)
 
-	activityTracker := workspaces.NewActivityTracker()
-	dispatcher.RegisterFunc(activityTracker.Handle)
-
-	allWorkspacesView := workspaces.NewWorkspacesView()
-	dispatcher.RegisterFunc(allWorkspacesView.Handle)
-
 	// **********************************************************+
 	// Gitlab Init
 	// **********************************************************+
@@ -111,6 +105,7 @@ func main() {
 	// **********************************************************+
 	// Workspace Init
 	// **********************************************************+
+	var idleReaper *workspaces.IdleReaper
 	workspaceRepo := func() *workspaces.Repository {
 		logFile := config.GetEnv("WORKSPACE_LOG", "./data/workspace.v2.log")
 
@@ -118,6 +113,9 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+
+		idleReaper = workspaces.NewIdleReaper(workspaceRepo, opencodeActions, dispatcher, config.GetEnvDuration("WORKLOAD_IDLE_CHECK_INTERVAL", time.Minute))
+		dispatcher.RegisterFunc(idleReaper.Handle)
 
 		workspaceView := workspaces.NewUserWorkspacesView()
 		dispatcher.RegisterFunc(workspaceView.Handle)
@@ -142,10 +140,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Idle-Reaper: stoppt laufende Workloads nach ihrer Inaktivitäts-TTL.
-	// Der erste Lauf markiert alle laufenden Workloads als "jetzt aktiv"
-	// (nach einem Restart ist der ActivityTracker leer).
-	idleReaper := workspaces.NewIdleReaper(workspaceRepo, opencodeActions, activityTracker, allWorkspacesView, dispatcher, config.GetEnvDuration("WORKLOAD_IDLE_CHECK_INTERVAL", time.Minute))
+	// Idle-Reaper starten. Durch das Replay existieren bereits Einträge für
+	// alle Workspaces (als "jetzt aktiv"), daher stoppt der erste Lauf nichts.
 	go idleReaper.Start(context.Background())
 
 	opencodeHandler.HandleFunc("PATCH /.git-works/session-mode", func(writer http.ResponseWriter, request *http.Request) {

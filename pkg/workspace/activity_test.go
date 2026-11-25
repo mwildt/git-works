@@ -22,41 +22,53 @@ func (e replayEnvelope) EventType() string         { return e.event.EventType() 
 func (e replayEnvelope) Event() events.DomainEvent { return e.event }
 func (e replayEnvelope) Time() time.Time           { return time.Now() }
 
-func TestActivityTrackerRuntimeEvents(t *testing.T) {
-	tracker := NewActivityTracker()
-	dispatcher := events.NewDispatcher(tracker)
+func TestIdleReaperHandle(t *testing.T) {
+	reaper := NewIdleReaper(nil, nil, nil, time.Minute)
+	now := time.Now()
+	reaper.now = func() time.Time { return now }
 
 	workspaceId := uuid.New()
 	workloadId := uuid.New()
-	at := time.Now()
+	ctx := context.Background()
 
-	if _, ok := tracker.Last(workloadId); ok {
-		t.Fatalf("expected no entry before any event")
+	// WorkspaceCreated (live und Replay) legt einen Eintrag mit "jetzt" an -
+	// nach einem Restart gelten dadurch alle Workspaces als aktiv.
+	if err := reaper.Handle(ctx, NewRuntimeEnvelope(workspaceId, &WorkspaceCreated{Id: workspaceId}, now)); err != nil {
+		t.Fatalf("handle: %s", err)
 	}
-
-	dispatch := func(event events.DomainEvent) {
-		if err := dispatcher.Dispatch(context.Background(), NewRuntimeEnvelope(workspaceId, event, at)); err != nil {
-			t.Fatalf("dispatch: %s", err)
-		}
+	entry, ok := reaper.entries()[workspaceId]
+	if !ok || !entry.At.Equal(now) || entry.WorkloadId != uuid.Nil() {
+		t.Fatalf("expected entry {nil, %v}, got %+v (ok=%v)", now, entry, ok)
 	}
-
-	dispatch(&WorkloadActivity{WorkspaceId: workspaceId, WorkloadId: workloadId, At: at})
-	if last, ok := tracker.Last(workloadId); !ok || !last.Equal(at) {
-		t.Fatalf("expected last=%v after activity, got %v (ok=%v)", at, last, ok)
-	}
-
-	later := at.Add(time.Minute)
-	dispatch(&WorkloadActivity{WorkspaceId: workspaceId, WorkloadId: workloadId, At: later})
-	if last, _ := tracker.Last(workloadId); !last.Equal(later) {
-		t.Fatalf("expected last=%v after later activity, got %v", later, last)
-	}
-
-	// Replay-Events dürfen den Tracker nicht verändern
-	if err := tracker.Handle(context.Background(), replayEnvelope{event: &WorkloadActivity{WorkspaceId: workspaceId, WorkloadId: workloadId, At: at}}); err != nil {
+	if err := reaper.Handle(ctx, replayEnvelope{event: &WorkspaceCreated{Id: uuid.New()}}); err != nil {
 		t.Fatalf("handle replay: %s", err)
 	}
-	if last, ok := tracker.Last(workloadId); !ok || !last.Equal(later) {
-		t.Fatalf("replay event must not change tracker, got last=%v ok=%v", last, ok)
+
+	// WorkloadActivity aktualisiert Workload + Zeitpunkt
+	at := now.Add(time.Minute)
+	if err := reaper.Handle(ctx, NewRuntimeEnvelope(workspaceId, &WorkloadActivity{WorkspaceId: workspaceId, WorkloadId: workloadId, At: at}, at)); err != nil {
+		t.Fatalf("handle: %s", err)
+	}
+	entry, _ = reaper.entries()[workspaceId]
+	if entry.WorkloadId != workloadId || !entry.At.Equal(at) {
+		t.Fatalf("expected entry {%v, %v}, got %+v", workloadId, at, entry)
+	}
+
+	// Replay-WorkloadActivity wird ignoriert
+	if err := reaper.Handle(ctx, replayEnvelope{event: &WorkloadActivity{WorkspaceId: workspaceId, WorkloadId: workloadId, At: at.Add(time.Hour)}}); err != nil {
+		t.Fatalf("handle replay: %s", err)
+	}
+	entry, _ = reaper.entries()[workspaceId]
+	if !entry.At.Equal(at) {
+		t.Fatalf("replay event must not change entry, got %+v", entry)
+	}
+
+	// WorkspaceDeleted entfernt den Eintrag
+	if err := reaper.Handle(ctx, NewRuntimeEnvelope(workspaceId, &WorkspaceDeleted{Id: workspaceId}, now)); err != nil {
+		t.Fatalf("handle: %s", err)
+	}
+	if _, ok := reaper.entries()[workspaceId]; ok {
+		t.Fatalf("expected entry removed after workspace deleted")
 	}
 }
 
@@ -97,10 +109,8 @@ func TestIdleReaper(t *testing.T) {
 		t.Fatalf("Error creating repository: %s", err)
 	}
 
-	tracker := NewActivityTracker()
-	dispatcher.RegisterFunc(tracker.Handle)
-	view := NewWorkspacesView()
-	dispatcher.RegisterFunc(view.Handle)
+	reaper := NewIdleReaper(repo, nil, dispatcher, time.Minute)
+	dispatcher.RegisterFunc(reaper.Handle)
 	portmanager := NewPortManager(9000)
 	dispatcher.RegisterFunc(portmanager.Handle)
 	dispatcher.RegisterFunc(NewWorkloadInitializer(repo, portmanager).Handle)
@@ -122,8 +132,10 @@ func TestIdleReaper(t *testing.T) {
 		t.Fatalf("Error creating workspace: %s", err)
 	}
 
-	if ids := view.Ids(); len(ids) != 1 || ids[0] != workspace.Id {
-		t.Fatalf("expected view to contain workspace %v, got %v", workspace.Id, ids)
+	// durch WorkspaceCreated existiert ein Eintrag (At=jetzt, Workload unbekannt)
+	entry, ok := reaper.entries()[workspace.Id]
+	if !ok || entry.WorkloadId != uuid.Nil() {
+		t.Fatalf("expected entry for workspace with unknown workload, got %+v (ok=%v)", entry, ok)
 	}
 
 	loaded, err := repo.LoadById(ctx, workspace.Id)
@@ -140,38 +152,27 @@ func TestIdleReaper(t *testing.T) {
 	}
 
 	now := time.Now()
-	stopped := map[uuid.UUID]int{}
-	reaper := NewIdleReaper(repo, nil, tracker, view, dispatcher, time.Minute)
 	reaper.now = func() time.Time { return now }
+	stopped := map[uuid.UUID]int{}
 	reaper.statusFn = func(workload Workload) (string, error) { return "up", nil }
 	reaper.stopFn = func(_ context.Context, _ *Workspace, workload Workload) error {
 		stopped[workload.Id]++
 		return nil
 	}
 
-	t.Run("first sight after restart is touched, not stopped", func(t *testing.T) {
+	t.Run("fresh entry is not stopped", func(t *testing.T) {
 		reaper.RunOnce(ctx)
 		if len(stopped) != 0 {
-			t.Fatalf("expected no stop on first sight, got %v", stopped)
-		}
-		for _, workload := range loaded.Workloads {
-			if _, ok := tracker.Last(workload.Id); !ok {
-				t.Fatalf("expected workload %v to be touched after first run", workload.Id)
-			}
+			t.Fatalf("expected no stop for fresh entry, got %v", stopped)
 		}
 	})
 
-	t.Run("idle longer than ttl is stopped", func(t *testing.T) {
-		for _, workload := range loaded.Workloads {
-			tracker.TouchAt(workload.Id, now.Add(-2*time.Minute))
-		}
+	t.Run("idle longer than ttl stops all workloads of the workspace", func(t *testing.T) {
+		reaper.set(workspace.Id, activityEntry{At: now.Add(-2 * time.Minute)})
 		reaper.RunOnce(ctx)
 		for _, workload := range loaded.Workloads {
 			if stopped[workload.Id] != 1 {
 				t.Fatalf("expected workload %v to be stopped once, got %d", workload.Id, stopped[workload.Id])
-			}
-			if last, ok := tracker.Last(workload.Id); !ok || !last.Equal(now) {
-				t.Fatalf("expected tracker entry updated to stop time %v, got %v (ok=%v)", now, last, ok)
 			}
 		}
 		activityEvents := 0
@@ -183,25 +184,30 @@ func TestIdleReaper(t *testing.T) {
 		if activityEvents != len(loaded.Workloads) {
 			t.Fatalf("expected %d activity events, got %d", len(loaded.Workloads), activityEvents)
 		}
+		// nach dem Stop-Event ist der Workload im Eintrag vermerkt
+		if entry, ok := reaper.entries()[workspace.Id]; !ok || entry.WorkloadId == uuid.Nil() || !entry.At.Equal(now) {
+			t.Fatalf("expected entry updated by stop event, got %+v (ok=%v)", entry, ok)
+		}
 	})
 
-	t.Run("freshly touched workload is not stopped", func(t *testing.T) {
+	t.Run("only the last active workload is checked", func(t *testing.T) {
 		stopped = map[uuid.UUID]int{}
-		for _, workload := range loaded.Workloads {
-			tracker.TouchAt(workload.Id, now)
-		}
+		reaper.set(workspace.Id, activityEntry{WorkloadId: loaded.Workloads[0].Id, At: now.Add(-2 * time.Minute)})
 		reaper.RunOnce(ctx)
-		if len(stopped) != 0 {
-			t.Fatalf("expected no stop for fresh workload, got %v", stopped)
+		if stopped[loaded.Workloads[0].Id] != 1 {
+			t.Fatalf("expected last active workload to be stopped, got %v", stopped)
+		}
+		for _, workload := range loaded.Workloads[1:] {
+			if stopped[workload.Id] != 0 {
+				t.Fatalf("expected other workload not to be stopped, got %v", stopped)
+			}
 		}
 	})
 
 	t.Run("down workload is not stopped", func(t *testing.T) {
 		stopped = map[uuid.UUID]int{}
 		reaper.statusFn = func(workload Workload) (string, error) { return "down", nil }
-		for _, workload := range loaded.Workloads {
-			tracker.TouchAt(workload.Id, now.Add(-2*time.Minute))
-		}
+		reaper.set(workspace.Id, activityEntry{At: now.Add(-2 * time.Minute)})
 		reaper.RunOnce(ctx)
 		if len(stopped) != 0 {
 			t.Fatalf("expected no stop for down workload, got %v", stopped)
@@ -211,7 +217,6 @@ func TestIdleReaper(t *testing.T) {
 	t.Run("ttl disabled is not stopped", func(t *testing.T) {
 		stopped = map[uuid.UUID]int{}
 		reaper.statusFn = func(workload Workload) (string, error) { return "up", nil }
-		// simuliere Workload mit TTL 0 (z. B. Event aus der Zeit vor dem Feature)
 		empty := *loaded
 		for i := range empty.Workloads {
 			switch data := empty.Workloads[i].Data.(type) {
@@ -222,10 +227,7 @@ func TestIdleReaper(t *testing.T) {
 				data.IdleTimeout = 0
 				empty.Workloads[i].Data = data
 			}
-			tracker.TouchAt(empty.Workloads[i].Id, now.Add(-2*time.Minute))
-		}
-		for _, workload := range empty.Workloads {
-			reaper.check(ctx, &empty, workload, now)
+			reaper.check(ctx, &empty, empty.Workloads[i], now.Add(-2*time.Minute), now)
 		}
 		if len(stopped) != 0 {
 			t.Fatalf("expected no stop for ttl<=0, got %v", stopped)
