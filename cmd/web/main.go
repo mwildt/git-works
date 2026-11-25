@@ -221,12 +221,12 @@ func main() {
 			}
 		}
 
-		if err := dispatcher.Dispatch(request.Context(), workspaces.NewRuntimeEnvelope(workspace.Id, &workspaces.WorkloadTouched{
+		if err := dispatcher.Dispatch(request.Context(), workspaces.NewRuntimeEnvelope(workspace.Id, &workspaces.WorkloadActivity{
 			WorkspaceId: workspace.Id,
 			WorkloadId:  workload.Id,
 			At:          time.Now(),
 		}, time.Now())); err != nil {
-			slog.Default().Warn("unable to dispatch workload touched event", "error", err)
+			slog.Default().Warn("unable to dispatch workload activity event", "error", err)
 		}
 
 		target, err := url.Parse(config.TargetUrl())

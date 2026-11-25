@@ -40,33 +40,22 @@ func TestActivityTrackerRuntimeEvents(t *testing.T) {
 		}
 	}
 
-	dispatch(&WorkloadTouched{WorkspaceId: workspaceId, WorkloadId: workloadId, At: at})
+	dispatch(&WorkloadActivity{WorkspaceId: workspaceId, WorkloadId: workloadId, At: at})
 	if last, ok := tracker.Last(workloadId); !ok || !last.Equal(at) {
-		t.Fatalf("expected last=%v after touched, got %v (ok=%v)", at, last, ok)
+		t.Fatalf("expected last=%v after activity, got %v (ok=%v)", at, last, ok)
 	}
 
 	later := at.Add(time.Minute)
-	dispatch(&WorkloadStarted{WorkspaceId: workspaceId, WorkloadId: workloadId, At: later})
+	dispatch(&WorkloadActivity{WorkspaceId: workspaceId, WorkloadId: workloadId, At: later})
 	if last, _ := tracker.Last(workloadId); !last.Equal(later) {
-		t.Fatalf("expected last=%v after started, got %v", later, last)
-	}
-
-	dispatch(&WorkloadStopped{WorkspaceId: workspaceId, WorkloadId: workloadId, At: later})
-	if _, ok := tracker.Last(workloadId); ok {
-		t.Fatalf("expected entry removed after stopped")
-	}
-
-	dispatch(&WorkloadIdleStopped{WorkspaceId: workspaceId, WorkloadId: workloadId, At: later})
-	if _, ok := tracker.Last(workloadId); ok {
-		t.Fatalf("expected entry removed after idle-stopped")
+		t.Fatalf("expected last=%v after later activity, got %v", later, last)
 	}
 
 	// Replay-Events dürfen den Tracker nicht verändern
-	dispatch(&WorkloadTouched{WorkspaceId: workspaceId, WorkloadId: workloadId, At: at})
-	if err := tracker.Handle(context.Background(), replayEnvelope{event: &WorkloadStopped{WorkspaceId: workspaceId, WorkloadId: workloadId, At: later}}); err != nil {
+	if err := tracker.Handle(context.Background(), replayEnvelope{event: &WorkloadActivity{WorkspaceId: workspaceId, WorkloadId: workloadId, At: at}}); err != nil {
 		t.Fatalf("handle replay: %s", err)
 	}
-	if last, ok := tracker.Last(workloadId); !ok || !last.Equal(at) {
+	if last, ok := tracker.Last(workloadId); !ok || !last.Equal(later) {
 		t.Fatalf("replay event must not change tracker, got last=%v ok=%v", last, ok)
 	}
 }
@@ -181,18 +170,18 @@ func TestIdleReaper(t *testing.T) {
 			if stopped[workload.Id] != 1 {
 				t.Fatalf("expected workload %v to be stopped once, got %d", workload.Id, stopped[workload.Id])
 			}
-			if _, ok := tracker.Last(workload.Id); ok {
-				t.Fatalf("expected tracker entry removed after idle stop")
+			if last, ok := tracker.Last(workload.Id); !ok || !last.Equal(now) {
+				t.Fatalf("expected tracker entry updated to stop time %v, got %v (ok=%v)", now, last, ok)
 			}
 		}
-		idleStopped := 0
+		activityEvents := 0
 		for _, envelope := range collected {
-			if _, ok := envelope.Event().(*WorkloadIdleStopped); ok {
-				idleStopped++
+			if _, ok := envelope.Event().(*WorkloadActivity); ok {
+				activityEvents++
 			}
 		}
-		if idleStopped != len(loaded.Workloads) {
-			t.Fatalf("expected %d idle-stopped events, got %d", len(loaded.Workloads), idleStopped)
+		if activityEvents != len(loaded.Workloads) {
+			t.Fatalf("expected %d activity events, got %d", len(loaded.Workloads), activityEvents)
 		}
 	})
 

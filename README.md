@@ -78,7 +78,7 @@ Ist nur aktiv, wenn `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` und eine Redirect-URI
 
 ### Automatisches Stoppen inaktiver Workloads
 
-Jeder Request, der über den Proxy an einen Workload geleitet wird, erzeugt ein nicht-persistentes Runtime-Event (`workload.touched`) und aktualisiert den Aktivitätszeitpunkt im In-Memory-`ActivityTracker`. Ebenso feuern Start/Stop eines Workloads (`workload.started`/`workload.stopped`) bzw. das automatische Stoppen (`workload.idle-stopped`) Runtime-Events auf dem Event-Dispatcher. Ein Hintergrund-Job (`WORKLOAD_IDLE_CHECK_INTERVAL`) prüft regelmäßig alle laufenden Workloads und stoppt diejenigen, deren letzte Aktivität länger als die TTL des Workloads (`WORKLOAD_IDLE_TIMEOUT`, beim Anlegen als `idle_timeout` im Domain-Event gespeichert) zurückliegt. Die Touch-Zeitstempel sind nicht persistent: Nach einem Restart gelten alle laufenden Workloads als „gerade aktiv“ und laufen die TTL erneut ab.
+Jeder Request, der über den Proxy an einen Workload geleitet wird, erzeugt ein nicht-persistentes Runtime-Event (`workload.activity` mit Workspace-ID, Workload-ID und Zeitpunkt) und aktualisiert den Aktivitätszeitpunkt im In-Memory-`ActivityTracker`; ebenso feuern Start/Stop eines Workloads und das automatische Stoppen dasselbe Event auf dem Event-Dispatcher. Ein Hintergrund-Job (`WORKLOAD_IDLE_CHECK_INTERVAL`) prüft regelmäßig alle laufenden Workloads und stoppt diejenigen, deren letzte Aktivität länger als die TTL des Workloads (`WORKLOAD_IDLE_TIMEOUT`, beim Anlegen als `idle_timeout` im Domain-Event gespeichert) zurückliegt. Die Aktivitätszeitpunkte sind nicht persistent: Nach einem Restart gelten alle laufenden Workloads als „gerade aktiv“ und laufen die TTL erneut ab.
 
 ### Mock-Server (`cmd/mock`)
 

@@ -112,7 +112,7 @@ func (s *Service) WorkloadStart(ctx context.Context, workspace *Workspace, workl
 	if err := workload.Start(token, s.actions, workspace.Id); err != nil {
 		return err
 	}
-	s.dispatchRuntime(ctx, workspace.Id, &WorkloadStarted{WorkspaceId: workspace.Id, WorkloadId: workload.Id, At: time.Now()})
+	s.dispatchRuntime(ctx, workspace.Id, &WorkloadActivity{WorkspaceId: workspace.Id, WorkloadId: workload.Id, At: time.Now()})
 	return nil
 }
 
@@ -124,7 +124,7 @@ func (s *Service) WorkloadStop(ctx context.Context, workspace *Workspace, worklo
 	if err := workload.Stop(token, s.actions, workspace.Id); err != nil {
 		return err
 	}
-	s.dispatchRuntime(ctx, workspace.Id, &WorkloadStopped{WorkspaceId: workspace.Id, WorkloadId: workload.Id, At: time.Now()})
+	s.dispatchRuntime(ctx, workspace.Id, &WorkloadActivity{WorkspaceId: workspace.Id, WorkloadId: workload.Id, At: time.Now()})
 	return nil
 }
 

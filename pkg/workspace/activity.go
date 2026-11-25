@@ -29,15 +29,8 @@ func (t *ActivityTracker) Handle(_ context.Context, envelope events.Envelope) er
 	if envelope.IsReplay() {
 		return nil
 	}
-	switch e := envelope.Event().(type) {
-	case *WorkloadTouched:
+	if e, ok := envelope.Event().(*WorkloadActivity); ok {
 		t.set(e.WorkloadId, e.At)
-	case *WorkloadStarted:
-		t.set(e.WorkloadId, e.At)
-	case *WorkloadStopped:
-		t.remove(e.WorkloadId)
-	case *WorkloadIdleStopped:
-		t.remove(e.WorkloadId)
 	}
 	return nil
 }
@@ -61,12 +54,6 @@ func (t *ActivityTracker) set(workloadId uuid.UUID, at time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.last[workloadId] = at
-}
-
-func (t *ActivityTracker) remove(workloadId uuid.UUID) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	delete(t.last, workloadId)
 }
 
 // WorkspacesView pflegt die Menge aller Workspace-IDs (auch beim Replay) und
@@ -194,7 +181,7 @@ func (r *IdleReaper) check(ctx context.Context, workspace *Workspace, workload W
 		return
 	}
 	if r.dispatcher != nil {
-		event := &WorkloadIdleStopped{WorkspaceId: workspace.Id, WorkloadId: workload.Id, At: now, IdleFor: idleFor}
+		event := &WorkloadActivity{WorkspaceId: workspace.Id, WorkloadId: workload.Id, At: now}
 		if err := r.dispatcher.Dispatch(ctx, NewRuntimeEnvelope(workspace.Id, event, now)); err != nil {
 			slog.Default().Warn("idle reaper: unable to dispatch event", "type", event.EventType(), "error", err)
 		}
