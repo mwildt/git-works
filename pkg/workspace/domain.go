@@ -46,9 +46,10 @@ type (
 	}
 
 	SSHWorkloadConfiguration struct {
-		Key  string
-		Host string
-		Port int
+		Key         string
+		Host        string
+		Port        int
+		IdleTimeout time.Duration `json:"idle_timeout"`
 	}
 
 	OpencodeWorkloadConfiguration struct {
@@ -57,13 +58,15 @@ type (
 		AuthPassword string
 		Host         string
 		Port         int
+		IdleTimeout  time.Duration `json:"idle_timeout"`
 	}
 
 	VscodeWorkloadConfiguration struct {
-		Key      string
-		Password string
-		Host     string
-		Port     int
+		Key         string
+		Password    string
+		Host        string
+		Port        int
+		IdleTimeout time.Duration `json:"idle_timeout"`
 	}
 
 	Project struct {
@@ -101,6 +104,20 @@ func NewWorkspace(owner string) *Workspace {
 
 func (workload Workload) WorkloadType() string {
 	return workload.Type
+}
+
+// IdleTimeout liefert die beim Anlegen des Workloads gespeicherte TTL.
+// Werte <= 0 bedeuten: der Workload wird nicht automatisch gestoppt.
+func (workload Workload) IdleTimeout() time.Duration {
+	switch config := workload.Data.(type) {
+	case OpencodeWorkloadConfiguration:
+		return config.IdleTimeout
+	case SSHWorkloadConfiguration:
+		return config.IdleTimeout
+	case VscodeWorkloadConfiguration:
+		return config.IdleTimeout
+	}
+	return 0
 }
 
 func (workload Workload) Status(opencodeActions *actions.Client) (string, error) {
@@ -454,6 +471,7 @@ func (workspace *Workspace) CreateOpencodeWorkload(host string, portManager *Por
 			AuthPassword: "password",
 			Host:         host,
 			Port:         port,
+			IdleTimeout:  config.GetEnvDuration("WORKLOAD_IDLE_TIMEOUT", 30*time.Minute),
 		},
 	}
 	workspace.apply(event)
@@ -474,9 +492,10 @@ func (workspace *Workspace) CreateSshWorkload(host string, portManager *PortMana
 		WorkspaceId: workspace.Id,
 		Type:        "SSH",
 		Data: SSHWorkloadConfiguration{
-			Key:  "workspaces_ssh_" + id.String()[0:10],
-			Host: host,
-			Port: port,
+			Key:         "workspaces_ssh_" + id.String()[0:10],
+			Host:        host,
+			Port:        port,
+			IdleTimeout: config.GetEnvDuration("WORKLOAD_IDLE_TIMEOUT", 30*time.Minute),
 		},
 	}
 	workspace.apply(event)
@@ -498,10 +517,11 @@ func (workspace *Workspace) CreateVscodeWorkload(host string, portManager *PortM
 		WorkspaceId: workspace.Id,
 		Type:        "VSCode",
 		Data: VscodeWorkloadConfiguration{
-			Key:      "workspaces_vscode_" + id.String()[0:10],
-			Password: "change-me-in-production",
-			Host:     host,
-			Port:     port,
+			Key:         "workspaces_vscode_" + id.String()[0:10],
+			Password:    "change-me-in-production",
+			Host:        host,
+			Port:        port,
+			IdleTimeout: config.GetEnvDuration("WORKLOAD_IDLE_TIMEOUT", 30*time.Minute),
 		},
 	}
 	workspace.apply(event)

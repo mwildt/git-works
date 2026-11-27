@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -104,6 +105,7 @@ func main() {
 	// **********************************************************+
 	// Workspace Init
 	// **********************************************************+
+	var idleReaper *workspaces.IdleReaper
 	workspaceRepo := func() *workspaces.Repository {
 		logFile := config.GetEnv("WORKSPACE_LOG", "./data/workspace.v2.log")
 
@@ -112,13 +114,16 @@ func main() {
 			log.Fatal(err)
 		}
 
+		idleReaper = workspaces.NewIdleReaper(workspaceRepo, opencodeActions, dispatcher, config.GetEnvDuration("WORKLOAD_IDLE_CHECK_INTERVAL", time.Minute))
+		dispatcher.RegisterFunc(idleReaper.Handle)
+
 		workspaceView := workspaces.NewUserWorkspacesView()
 		dispatcher.RegisterFunc(workspaceView.Handle)
 
 		workspaceInit := workspaces.NewWorkloadInitializer(workspaceRepo, portmanager)
 		dispatcher.RegisterFunc(workspaceInit.Handle)
 
-		workspaceService := workspaces.NewService(workspaceRepo, gitClient, opencodeActions, portmanager, tokenProvider)
+		workspaceService := workspaces.NewService(workspaceRepo, gitClient, opencodeActions, portmanager, tokenProvider, dispatcher)
 		if workspaceController, err := workspaces.NewController(workspaceRepo, workspaceService, sessionManager, workspaceView); err != nil {
 			log.Fatal(err)
 		} else {
@@ -134,6 +139,10 @@ func main() {
 	if err = workspaceRepo.Replay(); err != nil {
 		log.Fatal(err)
 	}
+
+	// Idle-Reaper starten. Durch das Replay existieren bereits Einträge für
+	// alle Workspaces (als "jetzt aktiv"), daher stoppt der erste Lauf nichts.
+	go idleReaper.Start(context.Background())
 
 	opencodeHandler.HandleFunc("PATCH /.git-works/session-mode", func(writer http.ResponseWriter, request *http.Request) {
 		cookie, err := request.Cookie(auth.SessionCookieName)
@@ -176,7 +185,7 @@ func main() {
 			return
 		}
 
-		_, workload, err := workspaceRepo.WorkloadById(request.Context(), session.ActiveWorkload.WorkspaceId, session.ActiveWorkload.WorkloadId)
+		workspace, workload, err := workspaceRepo.WorkloadById(request.Context(), session.ActiveWorkload.WorkspaceId, session.ActiveWorkload.WorkloadId)
 		if err != nil {
 			slog.Default().Warn("workspace not found")
 			http.Error(writer, "not found", http.StatusBadRequest)
@@ -206,6 +215,14 @@ func main() {
 					return
 				}
 			}
+		}
+
+		if err := dispatcher.Dispatch(request.Context(), workspaces.NewRuntimeEnvelope(workspace.Id, &workspaces.WorkloadActivity{
+			WorkspaceId: workspace.Id,
+			WorkloadId:  workload.Id,
+			At:          time.Now(),
+		}, time.Now())); err != nil {
+			slog.Default().Warn("unable to dispatch workload activity event", "error", err)
 		}
 
 		target, err := url.Parse(config.TargetUrl())
