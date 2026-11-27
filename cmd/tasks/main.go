@@ -2,16 +2,25 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+const (
+	transportHTTP  = "http"
+	transportStdio = "stdio"
 )
 
 const (
@@ -312,20 +321,15 @@ do the work, then finish it with task_complete. Record new work with task_add,
 inspect the list with task_list, change fields with task_update and delete
 entries with task_remove. Tasks are stored in a JSON file and survive restarts.`
 
-func main() {
-	defaultFile := os.Getenv("TASKS_FILE")
-	if defaultFile == "" {
-		defaultFile = "tasks.json"
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
-	file := flag.String("file", defaultFile, "path to the JSON task file (env TASKS_FILE)")
-	flag.Parse()
+	return fallback
+}
 
-	store, err := OpenStore(*file)
-	if err != nil {
-		log.Fatalf("tasks: %v", err)
-	}
-
-	server := mcp.NewServer(&mcp.Implementation{Name: "tasks", Version: "0.1.0"}, &mcp.ServerOptions{
+func newServer(store *Store) *mcp.Server {
+	server := mcp.NewServer(&mcp.Implementation{Name: "tasks", Version: "0.2.0"}, &mcp.ServerOptions{
 		Instructions: instructions,
 	})
 
@@ -397,7 +401,72 @@ func main() {
 		return nil, removeOutput{ID: in.ID, Removed: true}, nil
 	})
 
-	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
-		log.Fatalf("tasks: server exited: %v", err)
+	return server
+}
+
+func bearerAuth(token string, next http.Handler) http.Handler {
+	want := []byte("Bearer " + token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got := []byte(r.Header.Get("Authorization"))
+		if subtle.ConstantTimeCompare(got, want) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="tasks-mcp"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func runHTTP(server *mcp.Server, addr, token, file string) {
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "ok")
+	})
+	var handler http.Handler = mux
+	if token != "" {
+		handler = bearerAuth(token, handler)
 	}
+	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig := <-sigCh
+		log.Printf("tasks: %s received, shutting down", sig)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	log.Printf("tasks: MCP over HTTP on http://%s/mcp (store: %s)", addr, file)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("tasks: http server: %v", err)
+	}
+}
+
+func main() {
+	transport := flag.String("transport", envOr("TASKS_TRANSPORT", transportHTTP), "transport: http or stdio (env TASKS_TRANSPORT)")
+	addr := flag.String("addr", envOr("TASKS_ADDR", "127.0.0.1:8081"), "HTTP listen address (env TASKS_ADDR), MCP endpoint is /mcp")
+	file := flag.String("file", envOr("TASKS_FILE", "tasks.json"), "path to the JSON task file (env TASKS_FILE)")
+	token := flag.String("token", os.Getenv("TASKS_TOKEN"), "optional bearer token required on every HTTP request (env TASKS_TOKEN)")
+	flag.Parse()
+
+	store, err := OpenStore(*file)
+	if err != nil {
+		log.Fatalf("tasks: %v", err)
+	}
+	server := newServer(store)
+
+	if *transport == transportStdio {
+		if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+			log.Fatalf("tasks: server exited: %v", err)
+		}
+		return
+	}
+	if *transport != transportHTTP {
+		log.Fatalf("tasks: unknown transport %q: want http or stdio", *transport)
+	}
+	runHTTP(server, *addr, *token, *file)
 }

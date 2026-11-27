@@ -1,10 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func openTempStore(t *testing.T) *Store {
@@ -187,5 +192,89 @@ func TestPersistenceAcrossReopen(t *testing.T) {
 	}
 	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
 		t.Fatal("temp file left behind")
+	}
+}
+
+func TestHTTPTransportEndToEnd(t *testing.T) {
+	store := openTempStore(t)
+	server := newServer(store)
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	ctx := context.Background()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: ts.URL}, nil)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer session.Close()
+
+	call := func(name string, args map[string]any) map[string]any {
+		t.Helper()
+		res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if res.IsError {
+			t.Fatalf("%s: unexpected tool error: %v", name, res.Content)
+		}
+		sc, ok := res.StructuredContent.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: no structured content in %+v", name, res)
+		}
+		return sc
+	}
+
+	add := call("task_add", map[string]any{"title": "via http", "priority": "high"})
+	task := add["task"].(map[string]any)
+	if task["id"] != "T-1" || task["status"] != statusTodo {
+		t.Fatalf("unexpected add result: %+v", task)
+	}
+
+	next := call("task_next", map[string]any{})
+	nt := next["task"].(map[string]any)
+	if nt["id"] != "T-1" || nt["status"] != statusInProgress {
+		t.Fatalf("task_next did not claim T-1: %+v", nt)
+	}
+
+	call("task_complete", map[string]any{"id": "T-1", "note": "http ok"})
+
+	list := call("task_list", map[string]any{"status": "done"})
+	if list["count"].(float64) != 1 {
+		t.Fatalf("expected 1 done task, got %+v", list)
+	}
+
+	tasks, err := store.List("all")
+	if err != nil || len(tasks) != 1 || tasks[0].Note != "http ok" {
+		t.Fatalf("store not updated via HTTP: %+v, err=%v", tasks, err)
+	}
+}
+
+func TestBearerAuth(t *testing.T) {
+	h := bearerAuth("secret", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("missing token: got %d, want 401", rec.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.Header.Set("Authorization", "Bearer wrong")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong token: got %d, want 401", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("correct token: got %d, want 200", rec.Code)
 	}
 }
