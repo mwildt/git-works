@@ -84,6 +84,74 @@ Der Mock-Server stellt zusätzlich `GET /api/v4/user` (Token-Login) sowie einen 
 
 Hinweis: Der `Containerfile` setzt zusätzlich `PORT`, `WORKSPACE_BASE_DIR` und `STATIC_DIR` – diese werden vom Go-Code nicht gelesen. Bitte stattdessen `SERVER_ADDRESS` bzw. `DATA_DIR` setzen.
 
+## Tasks-MCP-Server (`cmd/tasks`)
+
+MCP-Server für eine persistente Task-Liste als JSON-Datei, damit ein Agent (z.B. opencode) Aufgaben nach und nach abarbeiten kann. Default-Transport ist **Streamable HTTP**, alternativ stdio.
+
+```bash
+go build -o tasks ./cmd/tasks
+./tasks                                              # HTTP auf 127.0.0.1:8081, Store ./tasks.json
+./tasks -addr 0.0.0.0:8081 -file /data/tasks.json -token geheim
+./tasks -transport stdio -file tasks.json            # stdio-Modus (z.B. lokal)
+```
+
+| Flag | Env | Default | Beschreibung |
+|---|---|---|---|
+| `-transport` | `TASKS_TRANSPORT` | `http` | `http` (Streamable HTTP) oder `stdio` |
+| `-addr` | `TASKS_ADDR` | `127.0.0.1:8081` | Listen-Adresse im HTTP-Modus |
+| `-file` | `TASKS_FILE` | `./tasks.json` | JSON-Store der Task-Liste |
+| `-token` | `TASKS_TOKEN` | – | Optionaler Bearer-Token; wenn gesetzt, erwartet jeder HTTP-Request `Authorization: Bearer <token>` |
+
+HTTP-Endpunkte: `POST /mcp` (MCP Streamable HTTP, Session über `Mcp-Session-Id`-Header; `GET`/`DELETE` für SSE-Stream/Session-Ende), `GET /health` → `ok`.
+
+Einbindung in opencode (z.B. über `OPENCODE_TEMPLATE_FILE` pro Workload in `opencode.json`) — remote über HTTP:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "tasks": {
+      "type": "remote",
+      "url": "http://127.0.0.1:8081/mcp",
+      "headers": { "Authorization": "Bearer geheim" }
+    }
+  }
+}
+```
+
+oder lokal via stdio:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "tasks": {
+      "type": "local",
+      "command": ["/usr/local/bin/tasks", "-transport", "stdio", "-file", "/workspace/tasks.json"]
+    }
+  }
+}
+```
+
+### Tools
+
+| Tool | Beschreibung |
+|---|---|
+| `task_add` | Neue Aufgabe anlegen (`title`, optional `description`, `priority`: `low`/`normal`/`high`); liefert die ID (z.B. `T-1`) |
+| `task_list` | Aufgaben auflisten, optional gefiltert nach `status` (`todo`, `in_progress`, `done`, `all`) |
+| `task_next` | Nächste offene Aufgabe holen (höchste Priorität, bei Gleichstand älteste zuerst) und auf `in_progress` setzen; `task: null` wenn keine offen ist |
+| `task_update` | Felder einer Aufgabe ändern (nur übergebene Felder werden geändert) |
+| `task_complete` | Aufgabe auf `done` setzen, optional mit `note` |
+| `task_remove` | Aufgabe löschen |
+
+Alle Antworten liefern neben Text auch `structuredContent` (JSON). Der Store wird bei jeder Änderung atomar (Temp-Datei + Rename) geschrieben und überlebt damit Neustarts; die Datei ist außerdem menschenlesbar und git-commitable.
+
+Workflow für den Agenten (steht auch in den Server-Instructions): `task_next` → Aufgabe abarbeiten → `task_complete`.
+
+```bash
+go test ./cmd/tasks
+```
+
 ## HTTP-Endpunkte
 
 | Methode & Pfad | Beschreibung |
@@ -136,6 +204,7 @@ Struktur:
 - `cmd/web` – der eigentliche Web-Server/Proxy
 - `cmd/git-askpass` – git-askpass-Helper (liefert `GIT_TOKEN` an git)
 - `cmd/mock` – Mock-Server für Entwicklung
+- `cmd/tasks` – MCP-Server (stdio) für persistente Task-Listen
 - `pkg/actions` – GitLab-HTTP-Aktionen (`gitlab-http-actions.yml`)
 - `pkg/auth` – Session-Management (Cookie-basiert)
 - `pkg/git` – git-Wrapper (clone, commit, push)
