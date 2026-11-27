@@ -92,7 +92,7 @@ func main() {
 	var oidcClient *auth.OIDCClient
 	if oidcConfig.Enabled() {
 		oidcClient = auth.NewOIDCClient(gitlabBaseURL, oidcConfig)
-		slog.Default().Info("oidc login enabled", "issuer", gitlabBaseURL, "redirect_uri", oidcConfig.RedirectURI)
+		slog.Default().Info("oidc login enabled", "issuer", gitlabBaseURL, "redirect_uri", oidcConfig.RedirectURI, "scopes", oidcConfig.Scopes)
 	} else {
 		slog.Default().Info("oidc login disabled (OIDC_CLIENT_ID, OIDC_CLIENT_SECRET und PUBLIC_BASE_URL/OIDC_REDIRECT_URI nicht vollstaendig gesetzt)")
 	}

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -89,6 +90,10 @@ func (c *OIDCClient) Enabled() bool {
 	return c != nil && c.config.Enabled()
 }
 
+func (c *OIDCClient) RedirectURI() string {
+	return c.config.RedirectURI
+}
+
 func (c *OIDCClient) discoveryDoc(ctx context.Context) (*Discovery, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -113,6 +118,7 @@ func (c *OIDCClient) discoveryDoc(ctx context.Context) (*Discovery, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
 		return nil, fmt.Errorf("oidc discovery decode: %w", err)
 	}
+	slog.Default().Debug("oidc discovery document loaded", "url", docURL, "issuer", doc.Issuer, "authorization_endpoint", doc.AuthorizationEndpoint, "token_endpoint", doc.TokenEndpoint, "userinfo_endpoint", doc.UserinfoEndpoint)
 	c.discovered = &doc
 	return c.discovered, nil
 }
@@ -173,6 +179,7 @@ func (c *OIDCClient) postToken(ctx context.Context, form url.Values) (*TokenResp
 	if tokenResp.AccessToken == "" {
 		return nil, fmt.Errorf("oidc token endpoint returned no access_token")
 	}
+	slog.Default().Debug("oidc token endpoint responded", "grant_type", form.Get("grant_type"), "status", resp.StatusCode, "token_type", tokenResp.TokenType, "expires_in", tokenResp.ExpiresIn, "scope", tokenResp.Scope, "has_refresh_token", tokenResp.RefreshToken != "")
 	return &tokenResp, nil
 }
 
@@ -225,6 +232,7 @@ func (c *OIDCClient) Revoke(ctx context.Context, token string, tokenTypeHint str
 		return err
 	}
 	if doc.RevocationEndpoint == "" {
+		slog.Default().Debug("oidc revocation endpoint not configured, skipping revoke", "token_type_hint", tokenTypeHint)
 		return nil
 	}
 	form := url.Values{}
@@ -245,5 +253,6 @@ func (c *OIDCClient) Revoke(ctx context.Context, token string, tokenTypeHint str
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
+	slog.Default().Debug("oidc token revoke sent", "token_type_hint", tokenTypeHint, "status", resp.StatusCode)
 	return nil
 }

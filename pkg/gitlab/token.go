@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"gtihub.com/mwildt/git-works/pkg/auth"
@@ -36,10 +37,13 @@ func (p *TokenProvider) TokenFor(ctx context.Context) (Token, error) {
 	}
 	tokens, err := p.manager.RefreshOIDC(session.Id, func(current auth.OIDCTokens) (auth.OIDCTokens, error) {
 		if time.Now().Add(tokenRefreshSkew).Before(current.Expiry) {
+			slog.Default().Debug("oidc access token still valid", "username", session.Username, "expires_at", current.Expiry)
 			return current, nil
 		}
+		slog.Default().Info("oidc access token expired, refreshing", "username", session.Username, "expired_at", current.Expiry)
 		resp, err := p.oidc.Refresh(ctx, current.RefreshToken)
 		if err != nil {
+			slog.Default().Error("oidc token refresh failed", "username", session.Username, "error", err)
 			return current, fmt.Errorf("refresh token: %w", err)
 		}
 		refreshToken := resp.RefreshToken
@@ -50,6 +54,7 @@ func (p *TokenProvider) TokenFor(ctx context.Context) (Token, error) {
 		if resp.ExpiresIn <= 0 {
 			expiry = time.Now().Add(2 * time.Hour)
 		}
+		slog.Default().Info("oidc token refreshed", "username", session.Username, "expires_in", resp.ExpiresIn, "refresh_token_rotated", refreshToken != current.RefreshToken, "new_expiry", expiry)
 		return auth.OIDCTokens{
 			AccessToken:  resp.AccessToken,
 			RefreshToken: refreshToken,
