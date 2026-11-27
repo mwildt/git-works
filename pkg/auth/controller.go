@@ -29,17 +29,24 @@ func (ctrl *Controller) SetUp(router *http.ServeMux) {
 			http.Error(w, "invalid JSON", http.StatusUnauthorized)
 			return
 		}
+		slog.Default().Info("logout", "username", session.Username, "auth_method", session.AuthMethod)
 
 		if session.AuthMethod == AuthMethodOIDC && ctrl.oidc.Enabled() {
 			if tokens, ok := ctrl.manager.OIDCTokens(session.Id); ok {
 				if err := ctrl.oidc.Revoke(r.Context(), tokens.AccessToken, "access_token"); err != nil {
-					slog.Default().Warn("oidc access token revoke failed", "error", err)
+					slog.Default().Warn("oidc access token revoke failed", "error", err, "username", session.Username)
+				} else {
+					slog.Default().Debug("oidc access token revoked", "username", session.Username)
 				}
 				if tokens.RefreshToken != "" {
 					if err := ctrl.oidc.Revoke(r.Context(), tokens.RefreshToken, "refresh_token"); err != nil {
-						slog.Default().Warn("oidc refresh token revoke failed", "error", err)
+						slog.Default().Warn("oidc refresh token revoke failed", "error", err, "username", session.Username)
+					} else {
+						slog.Default().Debug("oidc refresh token revoked", "username", session.Username)
 					}
 				}
+			} else {
+				slog.Default().Debug("no oidc tokens in session, skipping revoke", "username", session.Username)
 			}
 		}
 
